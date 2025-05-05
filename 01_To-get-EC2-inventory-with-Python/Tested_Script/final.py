@@ -25,7 +25,7 @@ csv_filename = os.path.join(output_dir, f"account_result_{timestamp}.csv")
 
 # S3 setup
 s3_client = session.client('s3')
-bucket_name = 'xxxxxxxxxxxxxxxxxxxxxxx'  # replace with your actual bucket
+bucket_name = 'mrsinghbucket080320222'  # replace with your actual bucket
 
 # Preferred tag keys
 preferred_tag_keys = ['Name', 'env', 'owner', 'techowner']
