@@ -22,7 +22,7 @@ Universal_Terraform_EC2_Create/.terraform/providers/registry.terraform.io/hashic
 *.bak
 *.txt
 *.log
-*.zip
+# *.zip
 *.tar.gz
 *.tar
 *.tgz
