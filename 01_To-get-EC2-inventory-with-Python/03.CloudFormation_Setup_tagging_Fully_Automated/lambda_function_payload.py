@@ -4,7 +4,11 @@ import os
 from datetime import datetime
 
 def lambda_handler(event, context):
-    session = boto3.Session(region_name='us-east-1')
+    region_name = os.environ.get('REGION_NAME', 'us-east-1')
+    bucket_name = os.environ.get('S3_BUCKET_NAME')
+    s3_folder = 'EC2_Inventory'
+
+    session = boto3.Session(region_name=region_name)
     
     sts_client = session.client('sts')
     account_id = sts_client.get_caller_identity()["Account"]
@@ -21,8 +25,6 @@ def lambda_handler(event, context):
     file_path = f"/tmp/{filename}"
 
     s3_client = session.client('s3')
-    bucket_name = 'mrsinghbucket080320222'
-    s3_folder = 'EC2_Inventory'
 
     preferred_tag_keys = [
         'Name', 'Application', 'Availability', 'Backup', 'CostCentre', 'CreatedBy',
@@ -72,7 +74,6 @@ def lambda_handler(event, context):
 
         csv_rows.append(row)
 
-    # Write CSV to /tmp/
     with open(file_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(csv_header)
