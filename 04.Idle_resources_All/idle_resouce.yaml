@@ -1,0 +1,233 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy Lambda for Idle Resource Pickup with API and Monthly Triggers
+
+Parameters:
+  LambdaPrefix:
+    Type: String
+    Default: "idle-resource"
+    Description: Prefix for naming all resources
+
+  LambdaCodeS3Bucket:
+    Type: String
+    Description: "S3 bucket where the Lambda ZIP file is stored. This bucket must exist in the same AWS region where you're deploying this stack."
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    ConstraintDescription: "Bucket name must be between 3 and 63 characters, start and end with a lowercase letter or number, and can contain lowercase letters, numbers, dots, and hyphens."
+
+  LambdaCodeS3Key:
+    Type: String
+    Description: "S3 key (file path) to the Lambda ZIP file within the specified bucket. Example: lambda-packages/idle-resource-reporter.zip"
+    AllowedPattern: "^[a-zA-Z0-9!_.*'()\\-\\/]+$"
+    ConstraintDescription: "S3 key must use valid S3 key characters."
+
+  OutputS3BucketName:
+    Type: String
+    Default: ""
+    Description: "S3 bucket name where the Lambda will store reports. Leave empty to auto-generate a unique name."
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    ConstraintDescription: "Bucket name must be empty (for auto-generation) or follow S3 naming rules: 3-63 lowercase alphanumeric characters, dots, or hyphens."
+
+  UseExistingBucket:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Set to 'true' if you want to use an existing bucket instead of creating a new one
+
+  ScheduleExpression:
+    Type: String
+    Default: "rate(30 days)"
+    Description: Schedule expression for monthly EventBridge rule (e.g. 'rate(30 days)' or 'cron(0 9 1 * ? *)')
+
+Conditions:
+  ShouldCreateBucket: !Equals [!Ref UseExistingBucket, "false"]
+  HasProvidedBucketName: !Not [!Equals [!Ref OutputS3BucketName, ""]]
+
+Mappings:
+  Constants:
+    BucketConfig:
+      Prefix: "idle-resources"
+
+Resources:
+  # Use CloudFormation's built-in functions to create a unique string
+  # This replaces the RandomStringGenerator Lambda
+  UniqueResourceID:
+    Type: AWS::CloudFormation::Stack
+    Condition: ShouldCreateBucket
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/cloudformation-static/aws-resource-id.json
+
+  ##############################
+  # S3 Output Bucket (Optional)
+  ##############################
+  IdleResourceOutputBucket:
+    Type: AWS::S3::Bucket
+    Condition: ShouldCreateBucket
+    Properties:
+      BucketName: !If 
+        - HasProvidedBucketName
+        - !Ref OutputS3BucketName
+        - !Join 
+          - "-"
+          - - !FindInMap [Constants, BucketConfig, Prefix]
+            - !Ref "AWS::AccountId"
+            - !Select [0, !Split ["-", !GetAtt UniqueResourceID.Outputs.ResourceID]]
+      LifecycleConfiguration:
+        Rules:
+          - Id: AutoDelete
+            Status: Enabled
+            ExpirationInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${LambdaPrefix}-reports"
+        - Key: CreatedBy
+          Value: CloudFormation
+
+  ##############################
+  # IAM Role for Lambda
+  ##############################
+  IdleResourceLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${LambdaPrefix}-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+        - arn:aws:iam::aws:policy/IAMReadOnlyAccess
+        - arn:aws:iam::aws:policy/AWSLambda_ReadOnlyAccess
+        - arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess
+      Policies:
+        - PolicyName: AllowS3WriteForIdleReport
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: 
+                  - !If
+                    - ShouldCreateBucket
+                    - !Sub "arn:aws:s3:::${IdleResourceOutputBucket}/*"
+                    - !Sub "arn:aws:s3:::${OutputS3BucketName}/*"
+                  - !If
+                    - ShouldCreateBucket
+                    - !Sub "arn:aws:s3:::${IdleResourceOutputBucket}"
+                    - !Sub "arn:aws:s3:::${OutputS3BucketName}"
+
+  ##############################
+  # Lambda Function
+  ##############################
+  IdleResourceLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${LambdaPrefix}-pickup"
+      Handler: "lambda.lambda_handler"
+      Runtime: python3.12
+      Role: !GetAtt IdleResourceLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      MemorySize: 256
+      Timeout: 600
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !If 
+            - ShouldCreateBucket
+            - !Ref IdleResourceOutputBucket
+            - !Ref OutputS3BucketName
+
+  ##############################
+  # API Gateway (On-Demand Trigger)
+  ##############################
+  IdleResourceAPIGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${LambdaPrefix}-api"
+      Description: API for manual triggering of the Lambda
+
+  IdleResourceAPIGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !GetAtt IdleResourceAPIGateway.RootResourceId
+      RestApiId: !Ref IdleResourceAPIGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IdleResourceLambda.Arn}/invocations"
+      MethodResponses:
+        - StatusCode: 200
+
+  IdleResourceDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: IdleResourceAPIGatewayMethod
+    Properties:
+      RestApiId: !Ref IdleResourceAPIGateway
+      StageName: default
+
+  LambdaAPIGatewayInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref IdleResourceLambda
+      Principal: apigateway.amazonaws.com
+
+  ##############################
+  # EventBridge (Scheduled Trigger)
+  ##############################
+  IdleResourceEventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${LambdaPrefix}-monthly-trigger"
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt IdleResourceLambda.Arn
+          Id: MonthlyIdleResourceTarget
+          Input: '{}'
+
+  LambdaEventBridgeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref IdleResourceLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt IdleResourceEventBridgeRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Value: !GetAtt IdleResourceLambda.Arn
+    Description: ARN of the idle resource pickup Lambda
+
+  APIEndpoint:
+    Description: API Gateway endpoint to trigger Lambda
+    Value: !Sub "https://${IdleResourceAPIGateway}.execute-api.${AWS::Region}.amazonaws.com/default"
+
+  LambdaExecutionRole:
+    Description: IAM Role assumed by the Lambda function
+    Value: !GetAtt IdleResourceLambdaRole.Arn
+    
+  OutputBucket:
+    Description: S3 bucket where reports are stored
+    Value: !If 
+      - ShouldCreateBucket
+      - !Ref IdleResourceOutputBucket
+      - !Ref OutputS3BucketName
+    
+  ReportsLocation:
+    Description: S3 path where reports are stored
+    Value: !Sub "s3://${!If [ShouldCreateBucket, IdleResourceOutputBucket, OutputS3BucketName]}/reports/"
