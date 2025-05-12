@@ -73,3 +73,42 @@ If you encounter a "NoSuchKey" error, verify that:
 
 2. You have the correct permissions to read the S3 object
 3. The bucket exists in the same region as where you're deploying the CloudFormation stack
+
+
+```sh
+Looking at your screenshot, I noticed a potential issue with the S3 key format. Let me provide feedback on your parameters:
+
+# Parameter Input Review
+
+Your parameters look mostly correct, but there's one important issue to fix:
+
+## LambdaCodeS3Key
+```
+mrsinghbucket08032022/lambda-packages/idle-resource-reporter.zip
+```
+
+This parameter should contain only the path **within** the bucket, not including the bucket name itself. The bucket name is already specified in the `LambdaCodeS3Bucket` parameter.
+
+### ✅ Correct format would be:
+```
+lambda-packages/idle-resource-reporter.zip
+```
+
+## Other Parameters:
+- ✅ **LambdaCodeS3Bucket**: Looks good
+- ✅ **LambdaPrefix**: Looks good (idle-resource)
+- ✅ **OutputS3BucketName**: Empty is fine (will auto-generate)
+- ✅ **ScheduleExpression**: rate(30 days) is valid
+- ✅ **UseDummyLambda**: false is correct if your Lambda code is ready in S3
+- ✅ **UseExistingBucket**: false is correct to create a new bucket
+
+## Ensure Lambda Code Is Packaged Correctly
+
+Before deployment, make sure your Lambda code is properly packaged:
+
+1. The package should include the `lambda.py` file and all dependencies (especially openpyxl)
+2. Upload it to the S3 path: `s3://mrsinghbucket08032022/lambda-packages/idle-resource-reporter.zip`
+3. Verify the file exists using: `aws s3 ls s3://mrsinghbucket08032022/lambda-packages/idle-resource-reporter.zip`
+
+After fixing the S3 key format, your CloudFormation deployment should work correctly!
+```
