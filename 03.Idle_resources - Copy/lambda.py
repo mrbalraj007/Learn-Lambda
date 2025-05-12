@@ -1,6 +1,5 @@
 import datetime
 import base64
-import os
 from io import BytesIO
 import boto3
 from openpyxl import Workbook
@@ -10,24 +9,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 def lambda_handler(event, context):
     print("🚀 Lambda execution started")
 
-    # Get S3 bucket from environment variables
-    output_bucket = os.environ.get('OUTPUT_BUCKET')
-    if not output_bucket:
-        raise ValueError("OUTPUT_BUCKET environment variable not set")
-    
-    # Get AWS region from Lambda's environment
-    # This is provided automatically by AWS Lambda
-    aws_region = os.environ.get('AWS_REGION')
-    print(f"🌐 Running in AWS Region: {aws_region}")
-
     ec2 = boto3.client('ec2')
     iam = boto3.client('iam')
     lambda_client = boto3.client('lambda')
-    s3 = boto3.client('s3')
 
     timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d-%H-%M')
     filename = f"idle-resource-report-{timestamp}.xlsx"
-    s3_key = f"reports/{filename}"
 
     wb = Workbook()
     summary_ws = wb.active
@@ -172,40 +159,16 @@ def lambda_handler(event, context):
     file_stream = BytesIO()
     wb.save(file_stream)
     file_stream.seek(0)
-    
-    # Upload to S3
-    print(f"📤 Uploading report to S3 bucket: {output_bucket}, key: {s3_key}")
-    s3.upload_fileobj(
-        file_stream, 
-        output_bucket, 
-        s3_key,
-        ExtraArgs={
-            'ContentType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        }
-    )
-    
-    # Generate pre-signed URL (valid for 7 days)
-    presigned_url = s3.generate_presigned_url(
-        'get_object',
-        Params={'Bucket': output_bucket, 'Key': s3_key},
-        ExpiresIn=604800  # 7 days in seconds
-    )
-    
+    excel_bytes = file_stream.read()
+    excel_b64 = base64.b64encode(excel_bytes).decode('utf-8')
+
     print("✅ Lambda execution completed successfully")
-    
-    # Return the S3 information and presigned URL
     return {
         'statusCode': 200,
+        'isBase64Encoded': True,
         'headers': {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition': f'attachment; filename="{filename}"'
         },
-        'body': {
-            'message': 'Report generated successfully',
-            's3Location': {
-                'bucket': output_bucket,
-                'key': s3_key
-            },
-            'downloadUrl': presigned_url,
-            'resourceCounts': resource_counts
-        }
+        'body': excel_b64
     }

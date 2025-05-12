@@ -9,18 +9,126 @@ Parameters:
 
   LambdaCodeS3Bucket:
     Type: String
-    Description: S3 bucket where the Lambda ZIP file is stored
+    Description: "S3 bucket where the Lambda ZIP file is stored. This bucket must exist in the same AWS region where you're deploying this stack."
+    AllowedPattern: "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    ConstraintDescription: "Bucket name must be between 3 and 63 characters, start and end with a lowercase letter or number, and can contain lowercase letters, numbers, dots, and hyphens."
 
   LambdaCodeS3Key:
     Type: String
-    Description: S3 key (file path) to the Lambda ZIP file
+    Description: "S3 key (file path) to the Lambda ZIP file within the specified bucket. Example: lambda-packages/idle-resource-pickup.zip"
+    AllowedPattern: "^[a-zA-Z0-9!_.*'()\\-\\/]+$"
+    ConstraintDescription: "S3 key must use valid S3 key characters."
+
+  OutputS3BucketName:
+    Type: String
+    Default: ""
+    Description: "S3 bucket name where the Lambda will store reports. Leave empty to auto-generate a unique name."
+    AllowedPattern: "^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"
+    ConstraintDescription: "Bucket name must be empty (for auto-generation) or follow S3 naming rules: 3-63 lowercase alphanumeric characters, dots, or hyphens."
+
+  UseExistingBucket:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Set to 'true' if you want to use an existing bucket instead of creating a new one
 
   ScheduleExpression:
     Type: String
     Default: "rate(30 days)"
     Description: Schedule expression for monthly EventBridge rule (e.g. 'rate(30 days)' or 'cron(0 9 1 * ? *)')
 
+  UseDummyLambda:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "If 'true', deploys a simple placeholder Lambda with instructions instead of using S3 package. Use this for testing the template only."
+
+Conditions:
+  ShouldCreateBucket: !Equals [!Ref UseExistingBucket, "false"]
+  HasProvidedBucketName: !Not [!Equals [!Ref OutputS3BucketName, ""]]
+  UseDummyLambdaCode: !Equals [!Ref UseDummyLambda, "true"]
+
+Mappings:
+  Constants:
+    BucketConfig:
+      Prefix: "idle-resources"
+
 Resources:
+  # Generate pseudo-random string for bucket name uniqueness
+  RandomStringGenerator:
+    Type: "AWS::Lambda::Function"
+    Condition: ShouldCreateBucket
+    Properties:
+      Handler: "index.handler"
+      Role: !GetAtt RandomStringGeneratorRole.Arn
+      Runtime: "python3.9"
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import cfnresponse
+          import random
+          import string
+          
+          def handler(event, context):
+            if event['RequestType'] in ('Create', 'Update'):
+              # Generate a random string of 8 lowercase letters
+              random_string = ''.join(random.choices(string.ascii_lowercase, k=8))
+              responseData = {'RandomString': random_string}
+            else:
+              responseData = {'RandomString': 'delete'}
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+
+  RandomStringGeneratorRole:
+    Type: "AWS::IAM::Role"
+    Condition: ShouldCreateBucket
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+  GenerateRandomString:
+    Type: "Custom::RandomString"
+    Condition: ShouldCreateBucket
+    Properties:
+      ServiceToken: !GetAtt RandomStringGenerator.Arn
+      Timestamp: !Ref "AWS::StackId"  # Ensures uniqueness between deployments
+
+  ##############################
+  # S3 Output Bucket (Optional)
+  ##############################
+  IdleResourceOutputBucket:
+    Type: AWS::S3::Bucket
+    Condition: ShouldCreateBucket
+    Properties:
+      BucketName: !If 
+        - HasProvidedBucketName
+        - !Ref OutputS3BucketName
+        - !Join 
+          - "-"
+          - - !FindInMap [Constants, BucketConfig, Prefix]
+            - !Ref "AWS::AccountId"
+            - !Select [0, !Split ["-", !GetAtt GenerateRandomString.RandomString]]
+      LifecycleConfiguration:
+        Rules:
+          - Id: AutoDelete
+            Status: Enabled
+            ExpirationInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${LambdaPrefix}-reports"
+        - Key: CreatedBy
+          Value: CloudFormation
 
   ##############################
   # IAM Role for Lambda
@@ -39,7 +147,6 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
-        - arn:aws:iam::aws:policy/AmazonS3FullAccess
         - arn:aws:iam::aws:policy/IAMReadOnlyAccess
         - arn:aws:iam::aws:policy/AWSLambda_ReadOnlyAccess
         - arn:aws:iam::aws:policy/CloudWatchReadOnlyAccess
@@ -52,7 +159,54 @@ Resources:
                 Action:
                   - s3:PutObject
                   - s3:GetObject
-                Resource: !Sub "arn:aws:s3:::${LambdaCodeS3Bucket}/reports/*"
+                  - s3:GetBucketLocation
+                Resource: 
+                  - !Sub "arn:aws:s3:::${EffectiveBucketNameValue}/reports/*"
+                  - !Sub "arn:aws:s3:::${EffectiveBucketNameValue}"
+
+  # Create a simple Lambda to get the actual bucket name
+  BucketNameLookup:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Handler: "index.handler"
+      Role: !GetAtt BucketNameLookupRole.Arn
+      Runtime: "python3.9"
+      Timeout: 30
+      Code:
+        ZipFile: |
+          import cfnresponse
+          import boto3
+          
+          def handler(event, context):
+            if event['RequestType'] in ('Create', 'Update'):
+              # Simply pass through the bucket name
+              bucket_name = event['ResourceProperties']['BucketName']
+              responseData = {'BucketName': bucket_name}
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+            else:
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+
+  BucketNameLookupRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+
+  GetBucketName:
+    Type: "Custom::BucketName"
+    Properties:
+      ServiceToken: !GetAtt BucketNameLookup.Arn
+      BucketName: !If 
+        - ShouldCreateBucket
+        - !Ref IdleResourceOutputBucket
+        - !Ref OutputS3BucketName
 
   ##############################
   # Lambda Function
@@ -61,17 +215,30 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub "${LambdaPrefix}-pickup"
-      Handler: lambda_function.lambda_handler
-      Runtime: python3.12
+      Handler: !If [UseDummyLambdaCode, "index.handler", "lambda.lambda_handler"]
+      Runtime: python3.9
       Role: !GetAtt IdleResourceLambdaRole.Arn
-      Code:
-        S3Bucket: !Ref LambdaCodeS3Bucket
-        S3Key: !Ref LambdaCodeS3Key
-      MemorySize: 128
+      Code: !If 
+        - UseDummyLambdaCode
+        - ZipFile: |
+            import json
+            
+            def handler(event, context):
+                print("This is a placeholder Lambda function")
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps({
+                        'message': 'This is a placeholder Lambda. Please upload the actual Lambda code to S3 and update the stack.',
+                        'instructions': 'See README.md for instructions on packaging and uploading the Lambda code'
+                    })
+                }
+        - S3Bucket: !Ref LambdaCodeS3Bucket
+          S3Key: !Ref LambdaCodeS3Key
+      MemorySize: 256
       Timeout: 600
       Environment:
         Variables:
-          OUTPUT_BUCKET: !Ref LambdaCodeS3Bucket
+          OUTPUT_BUCKET: !GetAtt GetBucketName.BucketName
 
   ##############################
   # API Gateway (On-Demand Trigger)
@@ -132,6 +299,16 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt IdleResourceEventBridgeRule.Arn
 
+  ##############################
+  # Helper Resources
+  ##############################
+  EffectiveBucketNameValue:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Value: !GetAtt GetBucketName.BucketName
+      Description: The name of the S3 bucket used for storing reports
+
 Outputs:
   LambdaFunctionArn:
     Value: !GetAtt IdleResourceLambda.Arn
@@ -144,3 +321,11 @@ Outputs:
   LambdaExecutionRole:
     Description: IAM Role assumed by the Lambda function
     Value: !GetAtt IdleResourceLambdaRole.Arn
+    
+  OutputBucket:
+    Description: S3 bucket where reports are stored
+    Value: !GetAtt GetBucketName.BucketName
+    
+  ReportsLocation:
+    Description: S3 path where reports are stored
+    Value: !Sub "s3://${GetBucketName.BucketName}/reports/"

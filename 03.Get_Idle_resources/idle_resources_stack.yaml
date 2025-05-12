@@ -1,6 +1,28 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'CloudFormation template to detect and report idle AWS resources'
 
+Parameters:
+  AWSRegion:
+    Type: String
+    Default: us-east-1
+    Description: The AWS region to scan for idle resources
+    AllowedValues:
+      - us-east-1
+      - us-east-2
+      - us-west-1
+      - us-west-2
+      - ca-central-1
+      - eu-west-1
+      - eu-west-2
+      - eu-west-3
+      - eu-central-1
+      - ap-southeast-1
+      - ap-southeast-2
+      - ap-northeast-1
+      - ap-northeast-2
+      - ap-south-1
+      - sa-east-1
+
 Resources:
   # S3 Bucket for storing CSV reports
   IdleResourcesReportBucket:
@@ -76,6 +98,7 @@ Resources:
       Environment:
         Variables:
           S3_BUCKET_NAME: !Ref IdleResourcesReportBucket
+          TARGET_REGION: !Ref AWSRegion
       Code:
         ZipFile: |
           import boto3
@@ -86,21 +109,24 @@ Resources:
           from datetime import datetime, timezone, timedelta
           
           def lambda_handler(event, context):
+              # Get region from environment variable
+              region = os.environ['TARGET_REGION']
+              
               # Initialize AWS clients
-              ec2_client = boto3.client('ec2', region_name='us-east-1')
-              elb_client = boto3.client('elb', region_name='us-east-1')
-              elbv2_client = boto3.client('elbv2', region_name='us-east-1')
-              lambda_client = boto3.client('lambda', region_name='us-east-1')
-              iam_client = boto3.client('iam', region_name='us-east-1')
-              cloudwatch_client = boto3.client('cloudwatch', region_name='us-east-1')
-              s3_client = boto3.client('s3', region_name='us-east-1')
+              ec2_client = boto3.client('ec2', region_name=region)
+              elb_client = boto3.client('elb', region_name=region)
+              elbv2_client = boto3.client('elbv2', region_name=region)
+              lambda_client = boto3.client('lambda', region_name=region)
+              iam_client = boto3.client('iam', region_name=region)
+              cloudwatch_client = boto3.client('cloudwatch', region_name=region)
+              s3_client = boto3.client('s3', region_name=region)
               
               # Get bucket name from environment variable
               bucket_name = os.environ['S3_BUCKET_NAME']
               
-              # Get current date for filename
-              current_date = datetime.now().strftime('%Y-%m-%d')
-              csv_file_name = f"idle-resources-{current_date}.csv"
+              # Get current date and time for filename
+              current_datetime = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+              csv_file_name = f"idle-resources-{current_datetime}.csv"
               
               # Lists to store findings
               idle_resources = []
@@ -538,3 +564,6 @@ Outputs:
   ScheduleRule:
     Description: The CloudWatch Events rule that triggers the Lambda function
     Value: !Ref IdleResourcesScheduleRule
+  RegionUsed:
+    Description: The AWS region used to scan for idle resources
+    Value: !Ref AWSRegion
