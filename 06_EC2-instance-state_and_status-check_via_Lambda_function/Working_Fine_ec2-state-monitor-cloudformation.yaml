@@ -1,0 +1,361 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy resources for monitoring EC2 instance state changes'
+
+Parameters:
+  EmailAddress:
+    Description: Email address to receive EC2 state change notifications
+    Type: String
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Type: String
+    Default: EC2StateMonitor
+  SNSTopicName:
+    Description: Name of the SNS topic
+    Type: String
+    Default: EC2StateChangeTopic
+
+Resources:
+  # SNS Topic for sending email notifications
+  EC2StateChangeTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: 
+        Ref: SNSTopicName
+      DisplayName: EC2 Instance State Change Notifications
+
+  # SNS Subscription for the email address
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: 
+        Ref: EC2StateChangeTopic
+      Protocol: email
+      Endpoint: 
+        Ref: EmailAddress
+
+  # IAM Role for Lambda execution
+  EC2StateMonitorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EC2StateMonitorRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+      Policies:
+        - PolicyName: SNSPublishPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: 
+                  Ref: EC2StateChangeTopic
+        - PolicyName: STSGetCallerIdentityPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: "*"
+        - PolicyName: CloudTrailLookupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudtrail:LookupEvents
+                Resource: "*"
+
+  # Lambda function to process EC2 state changes
+  EC2StateMonitorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 
+        Ref: LambdaFunctionName
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: 
+        Fn::GetAtt: 
+          - EC2StateMonitorRole
+          - Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime, timedelta
+
+          def get_instance_initiator(instance_id, state, account_id):
+              """
+              Query CloudTrail to find who initiated the instance state change
+              """
+              # Map state to relevant EC2 API calls
+              event_names = {
+                  'stopped': 'StopInstances',
+                  'terminated': 'TerminateInstances'
+              }
+              
+              event_name = event_names.get(state)
+              if not event_name:
+                  return "Unknown"
+                  
+              cloudtrail = boto3.client('cloudtrail')
+              
+              # Look for events in the past 24 hours
+              end_time = datetime.now()
+              start_time = end_time - timedelta(hours=24)
+              
+              try:
+                  response = cloudtrail.lookup_events(
+                      LookupAttributes=[
+                          {'AttributeKey': 'EventName', 'AttributeValue': event_name},
+                          {'AttributeKey': 'ResourceName', 'AttributeValue': instance_id}
+                      ],
+                      StartTime=start_time,
+                      EndTime=end_time
+                  )
+                  
+                  if response['Events']:
+                      # Sort events by most recent first
+                      sorted_events = sorted(response['Events'], key=lambda x: x['EventTime'], reverse=True)
+                      for event in sorted_events:
+                          event_json = json.loads(event['CloudTrailEvent'])
+                          if 'userIdentity' in event_json:
+                              identity = event_json['userIdentity']
+                              
+                              # Handle different types of identities
+                              if 'type' in identity:
+                                  if identity['type'] == 'IAMUser':
+                                      return f"IAM User: {identity.get('userName', 'Unknown')}"
+                                  elif identity['type'] == 'AssumedRole':
+                                      role_info = identity.get('sessionContext', {}).get('sessionIssuer', {})
+                                      return f"Role: {role_info.get('userName', 'Unknown')} (via {identity.get('arn', 'Unknown')})"
+                                  elif identity['type'] == 'Root':
+                                      return f"AWS Account Root User"
+                                  else:
+                                      return f"{identity['type']}: {identity.get('principalId', 'Unknown')}"
+                              
+                              return f"User: {identity.get('arn', 'Unknown')}"
+                  
+                  return "No initiator found in CloudTrail logs"
+              except Exception as e:
+                  print(f"Error querying CloudTrail: {str(e)}")
+                  return f"Error determining initiator: {str(e)}"
+
+          def lambda_handler(event, context):
+              # Set up logging
+              print(f"Processing event: {json.dumps(event)}")
+              print(f"Lambda function version: 1.1 - Monitor Only")
+              
+              try:
+                  # Get SNS topic ARN from environment variable
+                  sns_topic_arn = os.environ['SNS_TOPIC_ARN']
+                  
+                  # Initialize boto3 clients - using read-only operations only
+                  ec2_client = boto3.client('ec2')
+                  sns_client = boto3.client('sns')
+                  sts_client = boto3.client('sts')
+                  
+                  # Get account information
+                  account_info = sts_client.get_caller_identity()
+                  account_id = account_info['Account']
+                  
+                  # Check if this is a CloudWatch Event for EC2 state change
+                  if 'detail-type' in event and event['detail-type'] == 'EC2 Instance State-change Notification':
+                      instance_id = event['detail']['instance-id']
+                      state = event['detail']['state']
+                      
+                      print(f"Processing state change for instance {instance_id} to state {state}")
+                      print(f"NOTE: This Lambda function only monitors instances and does not create any EC2 instances")
+                      
+                      # Skip states we're not interested in
+                      monitored_states = ['terminated', 'stopped']
+                      if state not in monitored_states:
+                          print(f"Skipping notification for state: {state}")
+                          return {
+                              'statusCode': 200,
+                              'body': json.dumps(f'Skipping notification for state: {state}')
+                          }
+                      
+                      # Get additional instance information
+                      print(f"Retrieving instance details for {instance_id}")
+                      response = ec2_client.describe_instances(InstanceIds=[instance_id])
+                      instance = response['Reservations'][0]['Instances'][0]
+                      
+                      # Get IP addresses
+                      private_ip = instance.get('PrivateIpAddress', 'N/A')
+                      public_ip = instance.get('PublicIpAddress', 'N/A')
+                      
+                      # Create message with instance details
+                      instance_name = "Unnamed"
+                      creator = "Unknown"
+                      
+                      for tag in instance.get('Tags', []):
+                          if tag['Key'] == 'Name':
+                              instance_name = tag['Value']
+                          elif tag['Key'].lower() in ['createdby', 'creator', 'owner']:
+                              creator = tag['Value']
+                      
+                      # Get who initiated the state change
+                      print(f"Looking up initiator for state change")
+                      initiator = get_instance_initiator(instance_id, state, account_id)
+                      print(f"Found initiator: {initiator}")
+                      
+                      message = f"""
+                      EC2 Instance State Change Notification
+                      
+                      AWS Account ID: {account_id}
+                      Instance ID: {instance_id}
+                      Instance Name: {instance_name}
+                      Created By: {creator}
+                      Instance Type: {instance.get('InstanceType')}
+                      New State: {state}
+                      Initiated By: {initiator}
+                      Availability Zone: {instance.get('Placement', {}).get('AvailabilityZone')}
+                      Private IP Address: {private_ip}
+                      Public IP Address: {public_ip}
+                      """
+                      
+                      # Send notification to SNS topic
+                      print(f"Publishing notification to SNS topic: {sns_topic_arn}")
+                      sns_client.publish(
+                          TopicArn=sns_topic_arn,
+                          Subject=f"EC2 Instance {instance_id} State Changed to {state}",
+                          Message=message
+                      )
+                      print(f"Successfully sent notification for {instance_id}")
+                      
+                      return {
+                          'statusCode': 200,
+                          'body': json.dumps(f'Notification sent for {instance_id} state change to {state}')
+                      }
+                  else:
+                      # For manual testing or other event sources
+                      print("Processing manual invocation or non-state-change event")
+                      response = ec2_client.describe_instance_status(IncludeAllInstances=True)
+                      state_changes = []
+                      
+                      for instance in response["InstanceStatuses"]:
+                          instance_id = instance["InstanceId"]
+                          state = instance["InstanceState"]["Name"]
+                          
+                          # Skip states we're not interested in
+                          monitored_states = ['terminated','stopped']
+                          if state not in monitored_states:
+                              continue
+                          
+                          print(f"Found instance {instance_id} in state {state}")
+                          # Get additional instance details
+                          instance_detail = ec2_client.describe_instances(InstanceIds=[instance_id])
+                          if instance_detail['Reservations']:
+                              instance_info = instance_detail['Reservations'][0]['Instances'][0]
+                              private_ip = instance_info.get('PrivateIpAddress', 'N/A')
+                              public_ip = instance_info.get('PublicIpAddress', 'N/A')
+                              
+                              instance_name = "Unnamed"
+                              creator = "Unknown"
+                              
+                              for tag in instance_info.get('Tags', []):
+                                  if tag['Key'] == 'Name':
+                                      instance_name = tag['Value']
+                                  elif tag['Key'].lower() in ['createdby', 'creator', 'owner']:
+                                      creator = tag['Value']
+                              
+                              # Get who initiated the state change
+                              initiator = get_instance_initiator(instance_id, state, account_id)
+                                  
+                              state_changes.append(f"Instance {instance_id} ({instance_name}) is in state {state}, Created By: {creator}, Initiated By: {initiator}, Private IP: {private_ip}, Public IP: {public_ip}")
+                      
+                      # Send consolidated notification
+                      if state_changes:
+                          print(f"Sending consolidated notification for {len(state_changes)} instances")
+                          message = f"EC2 Instance State Report for Account {account_id}:\n\n" + "\n".join(state_changes)
+                          sns_client.publish(
+                              TopicArn=sns_topic_arn,
+                              Subject="EC2 Instance State Report",
+                              Message=message
+                          )
+                          print("Successfully sent consolidated notification")
+                      else:
+                          print("No instance states to report")
+                      
+                      return {
+                          'statusCode': 200,
+                          'body': json.dumps('EC2 instance state report processed')
+                      }
+              except Exception as e:
+                  error_message = f"Error processing event: {str(e)}"
+                  print(error_message)
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(error_message)
+                  }
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: 
+            Ref: EC2StateChangeTopic
+      Timeout: 30
+      MemorySize: 128
+
+  # CloudWatch Event Rule to trigger Lambda on EC2 state changes
+  EC2StateChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: EC2StateChangeRule
+      Description: Rule to trigger Lambda function on EC2 instance state changes
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - EC2 Instance State-change Notification
+        detail:
+          state:
+            - terminated
+            - stopped
+      State: ENABLED
+      Targets:
+        - Arn: 
+            Fn::GetAtt: 
+              - EC2StateMonitorFunction
+              - Arn
+          Id: EC2StateChangeTarget
+
+  # Permission for CloudWatch to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: 
+        Ref: EC2StateMonitorFunction
+      Principal: events.amazonaws.com
+      SourceArn: 
+        Fn::GetAtt: 
+          - EC2StateChangeRule
+          - Arn
+
+Outputs:
+  SNSTopicARN:
+    Description: ARN of the SNS topic for EC2 state change notifications
+    Value: 
+      Ref: EC2StateChangeTopic
+  LambdaFunctionARN:
+    Description: ARN of the Lambda function
+    Value: 
+      Fn::GetAtt: 
+        - EC2StateMonitorFunction
+        - Arn
+  LambdaRoleARN:
+    Description: ARN of the Lambda execution role
+    Value: 
+      Fn::GetAtt: 
+        - EC2StateMonitorRole
+        - Arn
