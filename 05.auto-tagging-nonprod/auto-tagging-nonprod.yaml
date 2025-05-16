@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This is an Automation that adds a Tag "CreatedBy" when a user creates a resource, like Volume, Snapshot, Image, SecurityGroup, or assumes a role to create any of these resources and  also adds the tag "ExpiryDate" to snapshots.
+
+Parameters:
+  Description:
+    Type: String
+    Description: Description of the Lambda function or event rule
+  Handler:
+    Type: String
+    Description: The Lambda function handler
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket name where Lambda function code is located
+  LambdaS3Key:
+    Type: String
+    Description: S3 key where Lambda function code is located
+  LambdaS3ObjectVersion:
+    Type: String
+    Default: ''
+    Description: S3 object version for Lambda function code
+  Runtime:
+    Type: String
+    Default: 'python3.12'  
+    Description: Lambda runtime (e.g.,python3.8, nodejs12.x)
+  MemorySize:
+    Type: String
+    Default: '256'
+    Description: Memory size for the Lambda function
+  Timeout:
+    Type: String
+    Default: '60'
+    Description: Timeout for Lambda function execution
+  RoleName:
+    Type: String
+    Default: ''
+    Description: Name of the IAM role
+  RetentionPeriodDays:
+    Type: Number
+    Default: 30
+    Description: The number of days after which the resource should expire (used for tagging the ExpiryDate)
+  
+
+Conditions:
+  LambdaS3ObjectVersionIsDefined:
+    Fn::Not:
+      - Fn::Equals:
+          - ''
+          - Ref: LambdaS3ObjectVersion
+  DefaultRegion: !Equals [!Ref 'AWS::Region', 'us-east-1']  # change the region "ap-southeast-2"
+
+
+
+Resources:
+  IAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: lambda.amazonaws.com  
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: events.amazonaws.com  
+      Policies:
+        - PolicyName: LambdaInvokePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: '*'
+
+        - PolicyName: CloudWatchLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:log-group:/aws/lambda/*  
+
+        - PolicyName: EC2DescribeTagsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeTags
+                  - ec2:CreateTags
+                Resource: "*"  
+        - PolicyName: S3LambdaCodeAccessPolicy  
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !If
+                  - DefaultRegion
+                  - !Sub "arn:aws:s3:::${LambdaS3Bucket}/*"
+                  - !Sub "arn:aws:s3:::${LambdaS3Bucket}-${AWS::Region}/*"
+
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+        S3ObjectVersion: !If
+          - LambdaS3ObjectVersionIsDefined
+          - !Ref LambdaS3ObjectVersion
+          - !Ref AWS::NoValue
+      Description: !Ref Description
+      Handler: !Ref Handler
+      Role: !GetAtt IAMRole.Arn  
+      Runtime: !Ref Runtime
+      MemorySize: !Ref MemorySize
+      Timeout: !Ref Timeout
+      Environment:
+        Variables:
+          tag_name: CreatedBy
+          retention_period_days: !Ref RetentionPeriodDays
+          
+
+  EventsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: !Ref Description
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventName:
+            - CreateVolume
+            - RunInstances
+            - CreateImage
+            - CreateSnapshot
+            - CreateSecurityGroup
+            - CreateSnapshots
+      RoleArn: !GetAtt IAMRole.Arn  
+      Targets:
+        - Arn: !GetAtt LambdaFunction.Arn
+          Id: LambdaTarget
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventsRule.Arn  
+    DependsOn: EventsRule  
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt LambdaFunction.Arn
+
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref LambdaFunction

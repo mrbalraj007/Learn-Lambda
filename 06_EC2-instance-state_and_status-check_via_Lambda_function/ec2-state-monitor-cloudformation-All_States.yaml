@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy resources for monitoring EC2 instance state changes'
+
+Parameters:
+  EmailAddress:
+    Description: Email address to receive EC2 state change notifications
+    Type: String
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Type: String
+    Default: EC2StateMonitor
+  SNSTopicName:
+    Description: Name of the SNS topic
+    Type: String
+    Default: EC2StateChangeTopic
+
+Resources:
+  # SNS Topic for sending email notifications
+  EC2StateChangeTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: 
+        Ref: SNSTopicName
+      DisplayName: EC2 Instance State Change Notifications
+
+  # SNS Subscription for the email address
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: 
+        Ref: EC2StateChangeTopic
+      Protocol: email
+      Endpoint: 
+        Ref: EmailAddress
+
+  # IAM Role for Lambda execution
+  EC2StateMonitorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EC2StateMonitorRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+      Policies:
+        - PolicyName: SNSPublishPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: 
+                  Ref: EC2StateChangeTopic
+
+  # Lambda function to process EC2 state changes
+  EC2StateMonitorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 
+        Ref: LambdaFunctionName
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: 
+        Fn::GetAtt: 
+          - EC2StateMonitorRole
+          - Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+
+          def lambda_handler(event, context):
+              # Get SNS topic ARN from environment variable
+              sns_topic_arn = os.environ['SNS_TOPIC_ARN']
+              
+              # Initialize boto3 clients
+              ec2_client = boto3.client('ec2')
+              sns_client = boto3.client('sns')
+              
+              # Check if this is a CloudWatch Event for EC2 state change
+              if 'detail-type' in event and event['detail-type'] == 'EC2 Instance State-change Notification':
+                  instance_id = event['detail']['instance-id']
+                  state = event['detail']['state']
+                  
+                  # Get additional instance information
+                  response = ec2_client.describe_instances(InstanceIds=[instance_id])
+                  instance = response['Reservations'][0]['Instances'][0]
+                  
+                  # Create message with instance details
+                  instance_name = "Unnamed"
+                  for tag in instance.get('Tags', []):
+                      if tag['Key'] == 'Name':
+                          instance_name = tag['Value']
+                          break
+                  
+                  message = f"""
+                  EC2 Instance State Change Notification
+                  
+                  Instance ID: {instance_id}
+                  Instance Name: {instance_name}
+                  Instance Type: {instance.get('InstanceType')}
+                  New State: {state}
+                  Availability Zone: {instance.get('Placement', {}).get('AvailabilityZone')}
+                  """
+                  
+                  # Send notification to SNS topic
+                  sns_client.publish(
+                      TopicArn=sns_topic_arn,
+                      Subject=f"EC2 Instance {instance_id} State Changed to {state}",
+                      Message=message
+                  )
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps(f'Notification sent for {instance_id} state change to {state}')
+                  }
+              else:
+                  # For manual testing or other event sources
+                  response = ec2_client.describe_instance_status(IncludeAllInstances=True)
+                  state_changes = []
+                  
+                  for instance in response["InstanceStatuses"]:
+                      instance_id = instance["InstanceId"]
+                      state = instance["InstanceState"]["Name"]
+                      state_changes.append(f"Instance {instance_id} is in state {state}")
+                  
+                  # Send consolidated notification
+                  if state_changes:
+                      message = "EC2 Instance State Report:\n\n" + "\n".join(state_changes)
+                      sns_client.publish(
+                          TopicArn=sns_topic_arn,
+                          Subject="EC2 Instance State Report",
+                          Message=message
+                      )
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('EC2 instance state report processed')
+                  }
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: 
+            Ref: EC2StateChangeTopic
+      Timeout: 30
+      MemorySize: 128
+
+  # CloudWatch Event Rule to trigger Lambda on EC2 state changes
+  EC2StateChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: EC2StateChangeRule
+      Description: Rule to trigger Lambda function on EC2 instance state changes
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - EC2 Instance State-change Notification
+      State: ENABLED
+      Targets:
+        - Arn: 
+            Fn::GetAtt: 
+              - EC2StateMonitorFunction
+              - Arn
+          Id: EC2StateChangeTarget
+
+  # Permission for CloudWatch to invoke Lambda
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: 
+        Ref: EC2StateMonitorFunction
+      Principal: events.amazonaws.com
+      SourceArn: 
+        Fn::GetAtt: 
+          - EC2StateChangeRule
+          - Arn
+
+Outputs:
+  SNSTopicARN:
+    Description: ARN of the SNS topic for EC2 state change notifications
+    Value: 
+      Ref: EC2StateChangeTopic
+  LambdaFunctionARN:
+    Description: ARN of the Lambda function
+    Value: 
+      Fn::GetAtt: 
+        - EC2StateMonitorFunction
+        - Arn
+  LambdaRoleARN:
+    Description: ARN of the Lambda execution role
+    Value: 
+      Fn::GetAtt: 
+        - EC2StateMonitorRole
+        - Arn
