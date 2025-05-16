@@ -66,14 +66,6 @@ Resources:
                 Action:
                   - sts:GetCallerIdentity
                 Resource: "*"
-        - PolicyName: CloudTrailLookupPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - cloudtrail:LookupEvents
-                Resource: "*"
 
   # Lambda function to process EC2 state changes
   EC2StateMonitorFunction:
@@ -92,7 +84,6 @@ Resources:
           import json
           import boto3
           import os
-          from datetime import datetime, timedelta
 
           def lambda_handler(event, context):
               # Get SNS topic ARN from environment variable
@@ -102,7 +93,6 @@ Resources:
               ec2_client = boto3.client('ec2')
               sns_client = boto3.client('sns')
               sts_client = boto3.client('sts')
-              cloudtrail_client = boto3.client('cloudtrail')
               
               # Get account information
               account_info = sts_client.get_caller_identity()
@@ -129,54 +119,15 @@ Resources:
                   private_ip = instance.get('PrivateIpAddress', 'N/A')
                   public_ip = instance.get('PublicIpAddress', 'N/A')
                   
-                  # Check CloudTrail for who initiated the stop/terminate action
-                  initiated_by = "Unknown"
-                  
-                  # Determine the event name to look for based on state
-                  event_name = "StopInstances" if state == 'stopped' else "TerminateInstances"
-                  
-                  try:
-                      # Look up events from the last 24 hours
-                      start_time = datetime.now() - timedelta(hours=24)
-                      end_time = datetime.now()
-                      
-                      response = cloudtrail_client.lookup_events(
-                          LookupAttributes=[
-                              {
-                                  'AttributeKey': 'EventName',
-                                  'AttributeValue': event_name
-                              }
-                          ],
-                          StartTime=start_time,
-                          EndTime=end_time
-                      )
-                      
-                      # Find the event for this specific instance
-                      for event in response['Events']:
-                          event_details = json.loads(event['CloudTrailEvent'])
-                          if 'responseElements' in event_details and 'instancesSet' in event_details['responseElements']:
-                              instances = event_details['responseElements']['instancesSet'].get('items', [])
-                              for instance_item in instances:
-                                  if instance_item.get('instanceId') == instance_id:
-                                      user_identity = event_details.get('userIdentity', {})
-                                      # Try to get the most descriptive user identifier
-                                      if 'userName' in user_identity:
-                                          initiated_by = user_identity['userName']
-                                      elif 'sessionContext' in user_identity and 'sessionIssuer' in user_identity['sessionContext']:
-                                          initiated_by = user_identity['sessionContext']['sessionIssuer'].get('userName', 'Unknown')
-                                      else:
-                                          initiated_by = user_identity.get('principalId', 'Unknown')
-                                      break
-                  except Exception as e:
-                      print(f"Error looking up CloudTrail events: {str(e)}")
-                      initiated_by = "Error retrieving initiator"
-                  
                   # Create message with instance details
                   instance_name = "Unnamed"
+                  creator = "Unknown"
                   
                   for tag in instance.get('Tags', []):
                       if tag['Key'] == 'Name':
                           instance_name = tag['Value']
+                      elif tag['Key'].lower() in ['createdby', 'creator', 'owner']:
+                          creator = tag['Value']
                   
                   message = f"""
                   EC2 Instance State Change Notification
@@ -184,7 +135,7 @@ Resources:
                   AWS Account ID: {account_id}
                   Instance ID: {instance_id}
                   Instance Name: {instance_name}
-                  Action Initiated By: {initiated_by}
+                  Created By: {creator}
                   Instance Type: {instance.get('InstanceType')}
                   New State: {state}
                   Availability Zone: {instance.get('Placement', {}).get('AvailabilityZone')}
