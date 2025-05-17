@@ -7,14 +7,13 @@ Parameters:
     Description: Description of the Lambda function or event rule
   Handler:
     Type: String
-    Default: 'auto_tagging.lambda_handler'  # Change this to your Lambda function handler
     Description: The Lambda function handler
   LambdaS3Bucket:
     Type: String
     Description: S3 bucket name where Lambda function code is located
   LambdaS3Key:
     Type: String
-    Description: S3 key where Lambda function code is located  i.e "src/auto_tagging.zip"
+    Description: S3 key where Lambda function code is located
   LambdaS3ObjectVersion:
     Type: String
     Default: ''
@@ -34,10 +33,10 @@ Parameters:
   RoleName:
     Type: String
     Default: ''
-    Description: Name of the IAM role .i.e "IAM-Role"
+    Description: Name of the IAM role
   RetentionPeriodDays:
     Type: Number
-    Default: 90
+    Default: 30
     Description: The number of days after which the resource should expire (used for tagging the ExpiryDate)
   
 

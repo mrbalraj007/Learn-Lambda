@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Resource Reporting Automation Stack 
+
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Default: AWS_Reporting_
+    Description: Prefix for all resource names (e.g., AWS_Reporting_)
+
+  ReportS3Bucket:
+    Type: String
+    Description: S3 bucket name to store the audit CSV report
+
+  ReportS3Key:
+    Type: String
+    Default: reports/AWS_resource_Reporting_audit.csv
+    Description: S3 key path for the audit report (e.g. reports/report.csv)
+
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing the Lambda deployment ZIP
+
+  LambdaCodeKey:
+    Type: String
+    Description: S3 key for the Lambda deployment ZIP file (e.g. lambda/lambda_function.zip)
+
+  ScheduleExpression:
+    Type: String
+    Default: cron(20 15 1 * ? *)  # Default: 3:20 PM UTC on the 1st of every month
+    Description: Cron expression for monthly audit schedule (UTC time)  
+
+  EmailNotification:
+    Type: String
+    Description: Email address for receiving audit notifications
+    AllowedPattern: '^.+@.+$'
+
+Resources:
+
+  ## IAM Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ResourcePrefix}Role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: !Sub "${ResourcePrefix}LambdaPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeRegions
+                  - ec2:DescribeVolumes
+                  - compute-optimizer:GetEBSVolumeRecommendations
+                  - s3:PutObject
+                  - s3:GetObject
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSecurityGroups
+                  - sns:Publish
+                  - sts:GetCallerIdentity
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  ## SNS Topic
+  AuditTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ResourcePrefix}SNSTopic"
+
+  ## Email Subscription
+  AuditEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AuditTopic
+      Protocol: email
+      Endpoint: !Ref EmailNotification
+
+  ## Lambda Function
+  AuditLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ResourcePrefix}Function"
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.11
+      Timeout: 300
+      MemorySize: 512
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref ReportS3Bucket
+          S3_REPORT_KEY: !Ref ReportS3Key
+          SNS_TOPIC_ARN: !Ref AuditTopic
+  
+  ## CloudWatch Log Group for Lambda
+  AuditLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ResourcePrefix}Function"
+      RetentionInDays: 30
+
+  ## Scheduled Monthly Trigger
+  MonthlyAuditSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ResourcePrefix}MonthlySchedule"
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AuditLambdaFunction.Arn
+          Id: !Sub "${ResourcePrefix}LambdaTarget"
+
+  ## Lambda Permission for EventBridge
+  AllowEventInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AuditLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MonthlyAuditSchedule.Arn
+
+Outputs:
+  LambdaFunctionName:
+    Value: !Ref AuditLambdaFunction
+    Description: Deployed Lambda function name
+
+  SNSTopicARN:
+    Value: !Ref AuditTopic
+    Description: SNS topic ARN for audit notifications
+
+  ScheduleRuleName:
+    Value: !Ref MonthlyAuditSchedule
+    Description: Name of the monthly EventBridge rule

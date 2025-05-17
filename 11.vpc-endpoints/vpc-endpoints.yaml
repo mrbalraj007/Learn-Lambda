@@ -1,0 +1,802 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: VPC End Points
+
+# Ver 0.6 20230918162806
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: VPC Details
+        Parameters: [VpcId, VpcCidr]
+      - Label:
+          default: S3 Endpoint (Gateway)
+        Parameters: [S3Endpoint, S3GatewayEndpointRouteTableIds]
+      - Label:
+          default: SSM Endpoints (Interface)
+        Parameters: 
+          - SsmEndpoint
+          - Ec2messagesEndpoint
+          - Ec2Endpoint
+          - SsmmessagesEndpoint
+          - EndpointsForSystemsManager
+          - OptionalEndpointsForSessionManager
+          - SsmInterfaceEndpointSubnets
+          - ExistingSecurityGroupIdsForSsm
+          - PrivateDnsForSsm
+      - Label:
+          default: CloudFormation Endpoint (Interface)
+        Parameters:
+          - CloudformationEndpoint
+          - CfInterfaceEndpointSubnets
+          - ExistingSecurityGroupIdsForCf
+          - PrivateDnsForCf
+      - Label:
+          default: ECS Endpoints (Interface)
+        Parameters:
+          - EcsEndpoint
+          - EcsAgentEndpoint
+          - EcsTelemetryEndpoint
+          - EcsInterfaceEndpointSubnets
+          - ExistingSecurityGroupIdsForEcs
+          - PrivateDnsForEcs
+      - Label:
+          default: ECR Endpoints (Interface)
+        Parameters:
+          - EcrEndpoints
+          - EcrInterfaceEndpointSubnets
+          - ExistingSecurityGroupIdsForEcr
+          - PrivateDnsForEcr
+      - Label:
+          default: CloudWatch Endpoint (Interface)
+        Parameters:
+          - CwEndpoint
+          - CwInterfaceEndpointSubnets
+          - ExistingSecurityGroupIdsForCw
+          - PrivateDnsForCw
+      - Label:
+          default: Secrets Manager Endpoint (Interface)
+        Parameters:
+          - SmEndpoint
+          - SmInterfaceEndpointSubnets
+          - ExistingSecurityGroupIdsForSm
+          - PrivateDnsForSm
+
+    ParameterLabels:
+      S3GatewayEndpointRouteTableIds:
+        default: Route Table IDs for S3 Gateway Endpoint
+      SsmInterfaceEndpointSubnets:
+        default: ID(s) of subnet(s) for SSM Interface Endpoint(s)
+      ExistingSecurityGroupIdsForSsm:
+        default: ID(s) of exsiting Security Group(s) For SSM Interface Endpoint(s)
+      PrivateDnsForSsm:
+        default: Enable Private DNS For SSM Interface Endpoint(s)
+      CfInterfaceEndpointSubnets:
+        default: ID(s) of subnet(s) for CloudFormation Interface Endpoint
+      ExistingSecurityGroupIdsForCf:
+        default: ID(s) of exsiting Security Group(s) For CloudFormation Interface Endpoint
+      PrivateDnsForCf:
+        default: Enable Private DNS For CloudFormation Interface Endpoint
+      EcsInterfaceEndpointSubnets:
+        default: ID(s) of subnet(s) for ECS Interface Endpoint(s)
+      ExistingSecurityGroupIdsForEcs:
+        default: ID(s) of exsiting Security Group(s) For ECS Interface Endpoint(s)
+      PrivateDnsForEcs:
+        default: Enable Private DNS For ECS Interface Endpoint(s)
+      EcrInterfaceEndpointSubnets:
+        default: ID(s) of subnet(s) for ECR Interface Endpoint(s)
+      ExistingSecurityGroupIdsForEcr:
+        default: ID(s) of exsiting Security Group(s) For ECR Interface Endpoint(s)
+      PrivateDnsForEcr:
+        default: Enable Private DNS For ECR Interface Endpoint(s)
+      CwInterfaceEndpointSubnets:
+        default: ID(s) of subnet(s) for CloudWatch Interface Endpoint
+      ExistingSecurityGroupIdsForCw:
+        default: ID(s) of exsiting Security Group(s) For CloudWatch Interface Endpoint
+      PrivateDnsForCw:
+        default: Enable Private DNS For CloudWatch Interface Endpoint
+      SmInterfaceEndpointSubnets:
+        default: ID(s) of subnet(s) for Secrets Manager Interface Endpoint
+      ExistingSecurityGroupIdsForSm:
+        default: ID(s) of exsiting Security Group(s) For Secrets Manager Interface Endpoint
+      PrivateDnsForSm:
+        default: Enable Private DNS For Secrets Manager Interface Endpoint
+
+Parameters:
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: VPC ID
+    Default: ''
+  
+  VpcCidr:
+    AllowedPattern: >-
+      ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(2[0-4]))$
+    ConstraintDescription: Base CIDR parameter must be in the form x.x.x.x/20-24
+    Description: The VPC CIDR
+    Type: String
+
+  SsmInterfaceEndpointSubnets:
+    Type: List<String>
+    Description: >-
+      The IDs of the subnets in which to create endpoint network interface(s). One subnet per AZ.
+      It can NOT be blank if any of Interface Endpoint(s) set to 'true'.
+      In the format of comma delimited list of strings.
+    Default: ''
+
+  ExistingSecurityGroupIdsForSsm:
+    Type: String
+    Description: >-
+      The IDs of the existing security groups to associate with the endpoint network interface. 
+      Security groups are supported only for interface endpoints. By default, a new security group will be
+      create along with Interface Endpoint(s). If specified, it will be additional to the default one.
+    Default: ''
+
+  S3GatewayEndpointRouteTableIds:
+    Type: String
+    Description: >-
+      The route table IDs (separated by commas). For gateway endpoints only.
+      It can NOT be blank if any of Gateway Endpoint(s) set to 'true'.
+    Default: ''
+
+  S3Endpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].s3 endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  SsmEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].ssm endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  Ec2messagesEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].ec2messages endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  Ec2Endpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].ec2 endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  SsmmessagesEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].ssmmessages endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  EndpointsForSystemsManager:
+    Type: String
+    Description: >-
+      Create required endpoints for Systems Manager, ssm, ec2messages and ec2 endpoints?
+      If 'true', it will override the individual setting(s) of Systems Manager related Interface Endpoint(s).
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  OptionalEndpointsForSessionManager:
+    Type: String
+    Description: >-
+      Create optional endpoints for Session Manager, ssmmessages?
+      If 'true', it will override the individual setting(s) of SSM related Interface Endpoint(s).
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  PrivateDnsForSsm:
+    Type: String
+    Description: >-
+      Associate a private hosted zone with the specified VPC.
+      The private hosted zone contains a record set for the default public DNS name for the AWS service for the Region, 
+      which resolves to the private IP addresses of the endpoint network interfaces in the VPC.
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  CloudformationEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].cloudformation endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  CfInterfaceEndpointSubnets:
+    Type: List<String>
+    Description: >-
+      The IDs of the subnets in which to create endpoint network interface(s). One subnet per AZ.
+      It can NOT be blank if CloudFormation Interface Endpoint set to 'true'.
+      In the format of comma delimited list of strings.
+    Default: ''
+
+  ExistingSecurityGroupIdsForCf:
+    Type: String
+    Description: >-
+      The IDs of the existing security groups to associate with the endpoint network interface(s). 
+      Security groups are supported only for interface endpoints. By default, a new security group will be
+      create along with Interface Endpoint(s). If specified, it will be additional to the one created along with endpoint(s).
+    Default: ''
+
+  PrivateDnsForCf:
+    Type: String
+    Description: >-
+      Associate a private hosted zone with the specified VPC.
+      The private hosted zone contains a record set for the default public DNS name for the AWS service for the Region, 
+      which resolves to the private IP addresses of the endpoint network interfaces in the VPC.
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  EcsEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].ecs endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  EcsAgentEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].ecs-agent endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  EcsTelemetryEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].ecs-telemetry endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  EcsInterfaceEndpointSubnets:
+    Type: List<String>
+    Description: >-
+      The IDs of the subnets in which to create endpoint network interface(s). One subnet per AZ.
+      It can NOT be blank if any of ECS Interface Endpoint(s) set to 'true'. 
+      In the format of comma delimited list of strings.
+    Default: ''
+
+  ExistingSecurityGroupIdsForEcs:
+    Type: String
+    Description: >-
+      The IDs of the existing security groups to associate with the endpoint network interface(s). 
+      Security groups are supported only for interface endpoints. By default, a new security group will be
+      create along with Interface Endpoint(s). If specified, it will be additional to the one created along with endpoint(s).
+    Default: ''
+
+  PrivateDnsForEcs:
+    Type: String
+    Description: >-
+      Associate a private hosted zone with the specified VPC.
+      The private hosted zone contains a record set for the default public DNS name for the AWS service for the Region, 
+      which resolves to the private IP addresses of the endpoint network interfaces in the VPC.
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  EcrEndpoints:
+    Type: String
+    Description: Create com.amazonaws.[region].ecr.api and com.amazonaws.[region].ecr.dkr endpoints?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  EcrInterfaceEndpointSubnets:
+    Type: List<String>
+    Description: >-
+      The IDs of the subnets in which to create endpoint network interface(s). One subnet per AZ.
+      It can NOT be blank if any of ECR Interface Endpoint(s) set to 'true'. 
+      In the format of comma delimited list of strings.
+    Default: ''
+
+  ExistingSecurityGroupIdsForEcr:
+    Type: String
+    Description: >-
+      The IDs of the existing security groups to associate with the endpoint network interface(s). 
+      Security groups are supported only for interface endpoints. By default, a new security group will be
+      create along with Interface Endpoint(s). If specified, it will be additional to the one created along with endpoint(s).
+    Default: ''
+
+  PrivateDnsForEcr:
+    Type: String
+    Description: >-
+      Associate a private hosted zone with the specified VPC.
+      The private hosted zone contains a record set for the default public DNS name for the AWS service for the Region, 
+      which resolves to the private IP addresses of the endpoint network interfaces in the VPC.
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  CwEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].logs endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  CwInterfaceEndpointSubnets:
+    Type: List<String>
+    Description: >-
+      The IDs of the subnets in which to create endpoint network interface(s). One subnet per AZ.
+      It can NOT be blank if CloudWatch Interface Endpoint set to 'true'. 
+      In the format of comma delimited list of strings.
+    Default: ''
+
+  ExistingSecurityGroupIdsForCw:
+    Type: String
+    Description: >-
+      The IDs of the existing security groups to associate with the endpoint network interface(s). 
+      Security groups are supported only for interface endpoints. By default, a new security group will be
+      create along with Interface Endpoint(s). If specified, it will be additional to the one created along with endpoint(s).
+    Default: ''
+
+  PrivateDnsForCw:
+    Type: String
+    Description: >-
+      Associate a private hosted zone with the specified VPC.
+      The private hosted zone contains a record set for the default public DNS name for the AWS service for the Region, 
+      which resolves to the private IP addresses of the endpoint network interfaces in the VPC.
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  SmEndpoint:
+    Type: String
+    Description: Create com.amazonaws.[region].logs endpoint?
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+  SmInterfaceEndpointSubnets:
+    Type: List<String>
+    Description: >-
+      The IDs of the subnets in which to create endpoint network interface(s). One subnet per AZ.
+      It can NOT be blank if any of Secrets Manager Interface Endpoint set to 'true'. 
+      In the format of comma delimited list of strings.
+    Default: ''
+
+  ExistingSecurityGroupIdsForSm:
+    Type: String
+    Description: >-
+      The IDs of the existing security groups to associate with the endpoint network interface(s). 
+      Security groups are supported only for interface endpoints. By default, a new security group will be
+      create along with Interface Endpoint(s). If specified, it will be additional to the one created along with endpoint(s).
+    Default: ''
+
+  PrivateDnsForSm:
+    Type: String
+    Description: >-
+      Associate a private hosted zone with the specified VPC.
+      The private hosted zone contains a record set for the default public DNS name for the AWS service for the Region, 
+      which resolves to the private IP addresses of the endpoint network interfaces in the VPC.
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+
+Conditions:
+  CreateEndpointsForSystemsManager:
+    !Equals [!Ref EndpointsForSystemsManager, 'true']
+
+  CreateOptionalEndpointsForSessionManager:
+    !Equals [!Ref OptionalEndpointsForSessionManager, 'true']
+
+  CreateS3Endpoint:
+    !Equals [!Ref S3Endpoint, 'true']
+
+  CreateSsmEndpoint:
+    !Or [!Condition CreateEndpointsForSystemsManager, !Equals [!Ref SsmEndpoint, 'true']]
+
+  CreateEc2messagesEndpoint:
+    !Or [!Condition CreateEndpointsForSystemsManager, !Equals [!Ref Ec2messagesEndpoint, 'true']]
+
+  CreateEc2Endpoint:
+    !Or [!Condition CreateEndpointsForSystemsManager, !Equals [!Ref Ec2Endpoint, 'true']]
+
+  CreateSsmmessagesEndpoint: !And
+    - !Or [!Equals [!Ref OptionalEndpointsForSessionManager, 'true'], !Equals [!Ref SsmmessagesEndpoint, 'true']]
+    - !Condition CreateEndpointsForSystemsManager
+
+  SsmInterfaceEndpointUsingExistingSGs:
+    !Not [!Equals [!Ref ExistingSecurityGroupIdsForSsm, '']]
+
+  EnablePrivateDnsForSsm:
+    !Equals [!Ref PrivateDnsForSsm, 'true']
+
+  CreateCloudformationEndpoint:
+    !Equals [!Ref CloudformationEndpoint, 'true']
+
+  CfInterfaceEndpointUsingExistingSGs:
+    !Not [!Equals [!Ref ExistingSecurityGroupIdsForCf, '']]
+
+  EnablePrivateDnsForCf:
+    !Equals [!Ref PrivateDnsForCf, 'true']
+
+  CreateEcsEndpoint:
+    !Equals [!Ref EcsEndpoint, 'true']
+
+  CreateEcsAgentEndpoint:
+    !Equals [!Ref EcsAgentEndpoint, 'true']
+
+  CreateEcsTelemetryEndpoint:
+    !Equals [!Ref EcsTelemetryEndpoint, 'true']
+
+  EcsInterfaceEndpointUsingExistingSGs:
+    !Not [!Equals [!Ref ExistingSecurityGroupIdsForEcs, '']]
+
+  EnablePrivateDnsForEcs:
+    !Equals [!Ref PrivateDnsForEcs, 'true']
+
+  CreateEcrEndpoints:
+    !Equals [!Ref EcrEndpoints, 'true']
+
+  EcrInterfaceEndpointUsingExistingSGs:
+    !Not [!Equals [!Ref ExistingSecurityGroupIdsForEcr, '']]
+
+  EnablePrivateDnsForEcr:
+    !Equals [!Ref PrivateDnsForEcr, 'true']
+
+  CreateCwEndpoint:
+    !Equals [!Ref CwEndpoint, 'true']
+
+  CwInterfaceEndpointUsingExistingSGs:
+    !Not [!Equals [!Ref ExistingSecurityGroupIdsForCw, '']]
+
+  EnablePrivateDnsForCw:
+    !Equals [!Ref PrivateDnsForCw, 'true']
+
+  CreateSmEndpoint:
+    !Equals [!Ref SmEndpoint, 'true']
+
+  SmInterfaceEndpointUsingExistingSGs:
+    !Not [!Equals [!Ref ExistingSecurityGroupIdsForSm, '']]
+
+  EnablePrivateDnsForSm:
+    !Equals [!Ref PrivateDnsForSm, 'true']
+
+  CreateSsmRelatedEndpoints: !Or
+    - Condition: CreateEndpointsForSystemsManager
+    - Condition: CreateOptionalEndpointsForSessionManager
+    - Condition: CreateSsmEndpoint
+    - Condition: CreateEc2messagesEndpoint
+    - Condition: CreateEc2Endpoint
+    - Condition: CreateSsmmessagesEndpoint
+
+  CreateEcsRelatedEndpoints: !Or
+    - Condition: CreateEcsEndpoint
+    - Condition: CreateEcsAgentEndpoint
+    - Condition: CreateEcsTelemetryEndpoint
+
+  CreateInterfaceEndpointSecurityGroup: !Or
+    - Condition: CreateSsmRelatedEndpoints
+    - Condition: CreateEcsRelatedEndpoints
+    - Condition: CreateCloudformationEndpoint
+    - Condition: CreateEcrEndpoints
+    - Condition: CreateCwEndpoint
+    - Condition: CreateSmEndpoint
+
+Resources:
+  S3GatewayEndpoint:
+    Condition: CreateS3Endpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action:
+              - 's3:*'
+            Resource:
+              - '*'
+      RouteTableIds: 
+        !Split [",", !Ref S3GatewayEndpointRouteTableIds]
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcId: !Ref VpcId
+
+  InterfaceEndpointSecurityGroup:
+    Condition: CreateInterfaceEndpointSecurityGroup
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Base Security Group for Interface Endpoints
+      VpcId: !Ref VpcId
+  
+  InterfaceEndpointSecurityGroupIngressHTTPS:
+    Condition: CreateInterfaceEndpointSecurityGroup
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref InterfaceEndpointSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Ref VpcCidr
+
+  SsmInterfaceEndpoint:
+    Condition: CreateSsmEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForSsm
+        - true
+        - false
+      SubnetIds: !Ref SsmInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - SsmInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForSsm
+              - !Ref 'AWS::NoValue'
+
+  Ec2messagesInterfaceEndpoint:
+    Condition: CreateEc2messagesEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForSsm
+        - true
+        - false
+      SubnetIds: !Ref SsmInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - SsmInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForSsm
+              - !Ref 'AWS::NoValue'
+
+  Ec2InterfaceEndpoint:
+    Condition: CreateEc2Endpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForSsm
+        - true
+        - false
+      SubnetIds: !Ref SsmInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - SsmInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForSsm
+              - !Ref 'AWS::NoValue'
+
+  SsmmessagesInterfaceEndpoint:
+    Condition: CreateSsmmessagesEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForSsm
+        - true
+        - false
+      SubnetIds: !Ref SsmInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - SsmInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForSsm
+              - !Ref 'AWS::NoValue'
+
+  CloudformationInterfaceEndpoint:
+    Condition: CreateCloudformationEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.cloudformation'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForCf
+        - true
+        - false
+      SubnetIds: !Ref CfInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - CfInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForCf
+              - !Ref 'AWS::NoValue'
+
+  EcsInterfaceEndpoint:
+    Condition: CreateEcsEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecs'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForEcs
+        - true
+        - false
+      SubnetIds: !Ref EcsInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - EcsInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForEcs
+              - !Ref 'AWS::NoValue'
+
+  EcsAgentInterfaceEndpoint:
+    Condition: CreateEcsAgentEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecs-agent'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForEcs
+        - true
+        - false
+      SubnetIds: !Ref EcsInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - EcsInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForEcs
+              - !Ref 'AWS::NoValue'
+
+  EcsTelemetryInterfaceEndpoint:
+    Condition: CreateEcsTelemetryEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecs-telemetry'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForEcs
+        - true
+        - false
+      SubnetIds: !Ref EcsInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - EcsInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForEcs
+              - !Ref 'AWS::NoValue'
+
+  EcrApiInterfaceEndpoint:
+    Condition: CreateEcrEndpoints
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForEcr
+        - true
+        - false
+      SubnetIds: !Ref EcrInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - EcrInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForEcr
+              - !Ref 'AWS::NoValue'
+
+  EcrDkrInterfaceEndpoint:
+    Condition: CreateEcrEndpoints
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForEcr
+        - true
+        - false
+      SubnetIds: !Ref EcrInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - EcrInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForEcr
+              - !Ref 'AWS::NoValue'
+
+  CwInterfaceEndpoint:
+    Condition: CreateCwEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForCw
+        - true
+        - false
+      SubnetIds: !Ref CwInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - CwInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForCw
+              - !Ref 'AWS::NoValue'
+
+  SmInterfaceEndpoint:
+    Condition: CreateSmEndpoint
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      VpcEndpointType: Interface
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      VpcId: !Ref VpcId
+      PrivateDnsEnabled: !If
+        - EnablePrivateDnsForSm
+        - true
+        - false
+      SubnetIds: !Ref SmInterfaceEndpointSubnets
+      SecurityGroupIds: !Split
+        - ','
+        - !Join
+          - ','
+          - - !Ref InterfaceEndpointSecurityGroup
+            - !If
+              - SmInterfaceEndpointUsingExistingSGs
+              - !Ref ExistingSecurityGroupIdsForSm
+              - !Ref 'AWS::NoValue'

@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for EC2 status check monitoring and email notifications'
+
+Parameters:
+  EmailAddress:
+    Type: String
+    Description: Email address to receive notifications
+
+Resources:
+  # SNS Topic for email notifications
+  EC2StatusNotificationTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      DisplayName: 'EC2 Status Check Notifications'
+
+  # SNS Subscription for email
+  EC2StatusEmailSubscription:
+    Type: 'AWS::SNS::Subscription'
+    Properties:
+      TopicArn: !Ref EC2StatusNotificationTopic
+      Protocol: 'email'
+      Endpoint: !Ref EmailAddress
+
+  # Lambda execution role
+  EC2StatusLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: EC2StatusLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:DescribeInstanceStatus'
+                Resource: '*'
+
+  # Lambda function to handle EC2 status check events
+  EC2StatusLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt EC2StatusLambdaRole.Arn
+      Runtime: python3.9
+      Timeout: 30
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref EC2StatusNotificationTopic
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import os
+          import logging
+
+          # Set up logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              logger.info(f"Received event: {json.dumps(event)}")
+              sns = boto3.client('sns')
+              
+              try:
+                  # Extract information from the CloudWatch Event
+                  if 'detail' not in event or 'instance-id' not in event['detail']:
+                      logger.error("Event does not contain required fields")
+                      return {
+                          'statusCode': 400,
+                          'body': 'Invalid event format'
+                      }
+                  
+                  instance_id = event['detail']['instance-id']
+                  
+                  # Determine the type of status check failure
+                  detail_type = event.get('detail-type', '')
+                  if 'EC2 Instance Status Check Failed' in detail_type:
+                      if 'Instance' in detail_type:
+                          check_type = 'Instance status check'
+                      elif 'System' in detail_type:
+                          check_type = 'System status check'
+                      else:
+                          check_type = 'Status check'
+                  else:
+                      # Handle state change events as well
+                      check_type = f"State change to {event['detail'].get('state', 'unknown')}"
+                  
+                  # Get instance details
+                  ec2 = boto3.client('ec2')
+                  try:
+                      instance_details = ec2.describe_instances(InstanceIds=[instance_id])
+                      logger.info(f"Instance details: {json.dumps(instance_details, default=str)}")
+                      
+                      # Extract useful instance information
+                      instance_name = 'Unnamed'
+                      if len(instance_details['Reservations']) > 0 and len(instance_details['Reservations'][0]['Instances']) > 0:
+                          instance = instance_details['Reservations'][0]['Instances'][0]
+                          for tag in instance.get('Tags', []):
+                              if tag['Key'] == 'Name':
+                                  instance_name = tag['Value']
+                  except Exception as e:
+                      logger.error(f"Error getting instance details: {str(e)}")
+                      instance_name = 'Error retrieving name'
+                  
+                  # Create message
+                  subject = f"EC2 Alert: {instance_id} ({instance_name})"
+                  message = f"""
+                  EC2 Instance Alert:
+                  
+                  Instance ID: {instance_id}
+                  Instance Name: {instance_name}
+                  Issue: {check_type} failed
+                  
+                  Event Details:
+                  {json.dumps(event, indent=2)}
+                  
+                  Please check the AWS console for more details and take appropriate action.
+                  """
+                  
+                  # Send SNS notification
+                  logger.info(f"Sending notification to SNS topic: {os.environ['SNS_TOPIC_ARN']}")
+                  response = sns.publish(
+                      TopicArn=os.environ['SNS_TOPIC_ARN'],
+                      Subject=subject,
+                      Message=message
+                  )
+                  logger.info(f"SNS publish response: {json.dumps(response)}")
+                  
+              except Exception as e:
+                  logger.error(f"Error processing event: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': f'Error: {str(e)}'
+                  }
+              
+              return {
+                  'statusCode': 200,
+                  'body': 'Notification sent successfully!'
+              }
+
+  # CloudWatch Events rule for EC2 status changes - combined rule for better coverage
+  EC2StatusCheckRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: 'Rule to detect EC2 status check failures and state changes'
+      EventPattern:
+        source:
+          - 'aws.ec2'
+        detail-type:
+          - 'EC2 Instance Status Check Failed'
+          - 'EC2 Instance Status Check Failed: Instance'
+          - 'EC2 Instance Status Check Failed: System'
+          - 'EC2 Instance State-change Notification'
+      State: 'ENABLED'
+      Targets:
+        - Arn: !GetAtt EC2StatusLambdaFunction.Arn
+          Id: 'EC2StatusLambdaTarget'
+
+  # Permission for CloudWatch Events to invoke Lambda
+  EC2StatusLambdaPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !Ref EC2StatusLambdaFunction
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt EC2StatusCheckRule.Arn
+
+Outputs:
+  SNSTopicARN:
+    Description: 'ARN of the SNS topic for EC2 status notifications'
+    Value: !Ref EC2StatusNotificationTopic
+  LambdaFunctionARN:
+    Description: 'ARN of the Lambda function processing EC2 status events'
+    Value: !GetAtt EC2StatusLambdaFunction.Arn

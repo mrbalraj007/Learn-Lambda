@@ -1,0 +1,264 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  This Cloudformation template creates resources to Schedule Auto Start-Stop of EC2 instances to save cost.
+  This involves creating 1 IAM Role with inline Policy, 2 Lambda functions with Permissions and 2 EventBridge Rules.
+  User also gets 3 Parameter options, in which 3 to be set in EventBridge Rules and 1 to set in Lambda Functions Environment variable.
+
+Parameters:
+  AutoStartEC2Schedule:
+    Default: cron(0 17 ? * 1-5 *)
+    Description: Auto Start EC2 Instance (Mon-Fri 4:00 AM AEST), enter a Schedule expression e.g. cron(0 18 ? * 1-5 *), see https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/ScheduledEvents.html
+    Type: String
+    MinLength: 20
+    MaxLength: 30
+  AutoStopEC2Schedule:
+    Default: cron(0 12 ? * 2-6 *)
+    Description: Auto Stop EC2 Instance (Mon-Fri 11 PM AEST), enter a Schedule expression e.g. cron(0 13 ? * 2-6 *), see https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/ScheduledEvents.html
+    Type: String
+    MinLength: 20
+    MaxLength: 30
+  TagEnvironment:
+    Type: String
+    Default: 'E'
+  TagOwner:
+    Type: String
+    Default: 'O'
+  TagManagedBy:
+    Type: String
+    Default: 'M'
+  TagCreatedBy:
+    Type: String
+    Default: 'C'
+
+Resources:
+  LambdaEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      #RoleName: LambdaEC2StartStopRole
+      Description: IAM Role for Lambda to Start Stop EC2 instances
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaEC2StartStopPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                - ec2:StartInstances
+                - ec2:StopInstances
+                Resource: arn:aws:ec2:*:*:instance/*
+              - Effect: Allow
+                Action:
+                - ec2:DescribeInstances
+                - ec2:DescribeTags
+                - ec2:DescribeInstanceStatus
+                Resource: '*'
+
+  AutoStartEC2Lambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: AutoStartInstanceDevImplementated
+      Runtime: python3.9
+      MemorySize: 128
+      Role: !GetAtt
+        - LambdaEC2Role
+        - Arn
+      Handler: index.lambda_handler
+      Timeout: 60
+      ReservedConcurrentExecutions: 10
+      Code:
+        ZipFile: |
+            import boto3
+            def lambda_handler(event, context):
+                # Initialize EC2 client
+                ec2_client = boto3.client('ec2')
+
+                # Define the tag filters (modify according to your requirements)
+                tag_filters = [
+                    {
+                        'Name': 'tag:Environment',  # Filter by the 'Environment' tag
+                        'Values': ['Development']           # Set your environment value
+                    },
+                    {
+                        'Name': 'tag:EnterpriseAppID',  # Filter by the 'EnterpriseAppID' tag
+                        'Values': ['xxxxxx']         # Set your EnterpriseAppID ID
+                    },
+                    {
+                        'Name': 'tag:AutoShutdown',  # Filter by the 'AutoShutdown' tag
+                        'Values': ['Enabled']           # Set your AutoShutdown value
+                    }
+                ]
+
+                # Describe EC2 instances with the defined tag filters
+                response = ec2_client.describe_instances(Filters=tag_filters)
+
+                # List to hold the instance IDs of stopped instances
+                instances_to_start = []
+
+                # Extract the instance IDs of stopped instances
+                for reservation in response['Reservations']:
+                    for instance in reservation['Instances']:
+                        if instance['State']['Name'] == 'stopped':  # Check if the instance is stopped
+                            instance_id = instance['InstanceId']
+                            instances_to_start.append(instance_id)
+
+                # Start the stopped instances
+                if instances_to_start:
+                    print(f"Starting the following instances: {instances_to_start}")
+                    ec2_client.start_instances(InstanceIds=instances_to_start)
+
+                    return {
+                        'statusCode': 200,
+                        'body': f"Started instances: {instances_to_start}"
+                    }
+                else:
+                    print("No stopped instances found with the specified tags.")
+                    return {
+                        'statusCode': 200,
+                        'body': "No instances to start."
+                    }
+                  
+      Description: >-
+        Auto Start EC2 Instance (from tag : AutoShutdown, Division & Environment)
+      Tags:
+        - Key: Environment
+          Value: !Ref TagEnvironment
+        - Key: Owner
+          Value: !Ref TagOwner
+        - Key: ManagedBy
+          Value: !Ref TagManagedBy
+        - Key: CreatedBy
+          Value: !Ref TagCreatedBy
+
+  AutoStartEC2Rule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name : AutoStartICDWEC2RuleDevImplementated
+      Description: Auto Start EC2 Instance (Mon-Fri 4:00 AM AEST / 18:00 UTC)
+      ScheduleExpression: !Ref AutoStartEC2Schedule
+      State: ENABLED
+      Targets:
+        -
+          Arn: !GetAtt AutoStartEC2Lambda.Arn
+          Id: AutoStartEC2Lambda
+
+  AutoStartEC2LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt AutoStartEC2Lambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn : !GetAtt AutoStartEC2Rule.Arn
+
+  AutoStopEC2Lambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: AutoStopInstanceDevImplementated
+      Runtime: python3.9
+      MemorySize: 128
+      Role: !GetAtt
+        - LambdaEC2Role
+        - Arn
+      Handler: index.lambda_handler
+      Timeout: 60
+      ReservedConcurrentExecutions: 10
+      Code:
+        ZipFile: |
+            import boto3
+            def lambda_handler(event, context):
+                # Initialize EC2 client
+                ec2_client = boto3.client('ec2')
+
+                # Define the tag filters (modify according to your needs)
+                tag_filters = [
+                    {
+                        'Name': 'tag:Environment',  # Filter by the 'Environment' tag
+                        'Values': ['Development']           # Set your environment value
+                    },
+                    {
+                        'Name': 'tag:EnterpriseAppID',  # Filter by the 'EnterpriseAppID' tag
+                        'Values': ['xxxxxx']         # Set your EnterpriseAppID ID
+                    },
+                    {
+                        'Name': 'tag:AutoShutdown',  # Filter by the 'AutoShutdown' tag
+                        'Values': ['Enabled']           # Set your AutoShutdown value
+                    }
+                ]
+
+                # Describe EC2 instances with the defined tag filters
+                response = ec2_client.describe_instances(Filters=tag_filters)
+
+                # List to hold the instance IDs of running instances
+                instances_to_stop = []
+
+                # Extract the instance IDs of running instances
+                for reservation in response['Reservations']:
+                    for instance in reservation['Instances']:
+                        if instance['State']['Name'] == 'running':  # Check if the instance is running
+                            instance_id = instance['InstanceId']
+                            instances_to_stop.append(instance_id)
+
+                # Stop the running instances
+                if instances_to_stop:
+                    print(f"Stopping the following instances: {instances_to_stop}")
+                    ec2_client.stop_instances(InstanceIds=instances_to_stop)
+
+                    return {
+                        'statusCode': 200,
+                        'body': f"Stopped instances: {instances_to_stop}"
+                    }
+                else:
+                    print("No running instances found with the specified tags.")
+                    return {
+                        'statusCode': 200,
+                        'body': "No instances to stop."
+                    }
+
+      Description: >-
+        Auto Stop EC2 Instance (from tag : AutoShutdown, Division & Environment)
+      Tags:
+        - Key: Environment
+          Value: !Ref TagEnvironment
+        - Key: Owner
+          Value: !Ref TagOwner
+        - Key: ManagedBy
+          Value: !Ref TagManagedBy
+        - Key: CreatedBy
+          Value: !Ref TagCreatedBy
+
+  AutoStopEC2Rule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name : AutoStopICDWEC2RuleDevImplementated
+      Description: Auto Stop EC2 Instance (Mon-Fri 11:00 PM AEST / 13:00 UTC)
+      ScheduleExpression: !Ref AutoStopEC2Schedule
+      State: ENABLED
+      Targets:
+        -
+          Arn: !GetAtt AutoStopEC2Lambda.Arn
+          Id: AutoStopEC2Lambda
+
+  AutoStopEC2LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt AutoStopEC2Lambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn : !GetAtt AutoStopEC2Rule.Arn
+
+Outputs:
+  AWSRegionOutput:
+    Description: AWS Region
+    Value: !Ref AWS::Region

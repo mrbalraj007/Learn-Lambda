@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "This CloudFormation template is for EBS Tagging using Lambda function and eventbridge rules.This Automation has two triggers,
+one is everyday at 1PM UTC and the other is whenever a volume is attached or detached. It literally picks the EnterpriseAppID of the Ec2 Instance and fixes on the volume.And also adds another tag(AttachedTo), which shows the instance ID as at the moment"
+
+Parameters:
+  ResourcePrefix:
+    Type: String
+    Description: "The prefix for resource names (e.g., EBS-Tagging)"
+  
+  S3BucketName:
+    Type: String
+    Description: "The S3 bucket where the Lambda function code is stored"
+  
+  S3Key:
+    Type: String
+    Description: "The S3 key for the Lambda function code"
+
+  CronExpression:
+    Type: String
+    Description: "The cron expression for the event rule"
+
+Resources:
+  EBSTaggingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ResourcePrefix}-Role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: !Sub "${ResourcePrefix}-Policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeInstances
+                  - ec2:CreateTags
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${S3BucketName}/*"
+
+
+  EBSTaggingLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ResourcePrefix}-Lambda"
+      Handler: lambda_function.main
+      Runtime: python3.12
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref S3Key
+      Role: !GetAtt EBSTaggingRole.Arn
+      Timeout: 300
+
+  DailyEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ResourcePrefix}-DailyRule"
+      ScheduleExpression: !Ref CronExpression
+      Targets:
+        - Arn: !GetAtt EBSTaggingLambda.Arn
+          Id: !Sub "${ResourcePrefix}-LambdaTarget"
+
+  LambdaPermissionForDailyEventBridge:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt EBSTaggingLambda.Arn
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt DailyEventRule.Arn
+
+  VolumeAttachmentEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ResourcePrefix}-VolumeAttachmentRule"
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventSource:
+            - ec2.amazonaws.com
+          eventName:
+            - AttachVolume
+            - DetachVolume
+      Targets:
+        - Arn: !GetAtt EBSTaggingLambda.Arn
+          Id: !Sub "${ResourcePrefix}-LambdaTarget"
+
+  LambdaPermissionForVolumeEventBridge:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt EBSTaggingLambda.Arn
+      Principal: events.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !GetAtt VolumeAttachmentEventRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: "ARN of the Lambda function"
+    Value: !GetAtt EBSTaggingLambda.Arn
+  EBSProcessingRoleArn:
+    Description: "ARN of the IAM Role for Lambda execution"
+    Value: !GetAtt EBSTaggingRole.Arn
