@@ -1,101 +1,106 @@
-<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36" version="27.0.6">
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/27.0.5 Chrome/134.0.6998.205 Electron/35.3.0 Safari/537.36" version="27.0.5">
   <diagram id="EC2-AutoStartStop-Architecture" name="EC2 Auto Start/Stop Architecture">
-    <mxGraphModel dx="866" dy="465" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+    <mxGraphModel dx="1426" dy="907" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="2" value="Amazon EventBridge&lt;br&gt;Rule: AutoStartEC2Rule&lt;br&gt;(cron: Mon-Fri 4:00 AM AEST)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" parent="1" vertex="1">
-          <mxGeometry x="160" y="180" width="78" height="78" as="geometry" />
-        </mxCell>
-        <mxCell id="4" value="AWS Lambda&lt;br&gt;Function: AutoStartInstance&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
-          <mxGeometry x="420" y="180" width="78" height="78" as="geometry" />
-        </mxCell>
-        <mxCell id="5" value="AWS Lambda&lt;br&gt;Function: AutoStopInstance" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
-          <mxGeometry x="420" y="358" width="78" height="78" as="geometry" />
-        </mxCell>
-        <mxCell id="6" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#BF0816;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.role;" parent="1" vertex="1">
-          <mxGeometry x="420" y="60" width="78" height="44" as="geometry" />
-        </mxCell>
-        <mxCell id="7" value="Amazon EC2 Instances&lt;br&gt;Tagged with:&lt;br&gt;- Environment: Development&lt;br&gt;- ApplicationID: xxxxxx&lt;br&gt;- AutoShutdown: Enabled" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" parent="1" vertex="1">
-          <mxGeometry x="734" y="280" width="78" height="78" as="geometry" />
-        </mxCell>
-        <mxCell id="8" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#2e75b5;rounded=0;fontSize=12;strokeWidth=2;flowAnimation=1;" parent="1" source="2" target="4" edge="1">
-          <mxGeometry width="100" relative="1" as="geometry">
-            <mxPoint x="270" y="219" as="sourcePoint" />
-            <mxPoint x="370" y="219" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="9" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#2e75b5;rounded=0;fontSize=12;strokeWidth=2;flowAnimation=1;" parent="1" source="3" target="5" edge="1">
-          <mxGeometry width="100" relative="1" as="geometry">
-            <mxPoint x="270" y="419" as="sourcePoint" />
-            <mxPoint x="370" y="419" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="10" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#70AD47;rounded=0;fontSize=12;startFill=0;dashed=1;dashPattern=1 1;strokeWidth=2;flowAnimation=1;" parent="1" source="6" target="4" edge="1">
-          <mxGeometry width="100" relative="1" as="geometry">
-            <mxPoint x="459" y="140" as="sourcePoint" />
-            <mxPoint x="459" y="170" as="targetPoint" />
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="11" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#70AD47;rounded=0;fontSize=12;startFill=0;dashed=1;dashPattern=1 1;strokeWidth=2;flowAnimation=1;" parent="1" source="6" target="5" edge="1">
-          <mxGeometry width="100" relative="1" as="geometry">
-            <mxPoint x="520" y="110" as="sourcePoint" />
-            <mxPoint x="510" y="380" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="534" y="82" />
-              <mxPoint x="534" y="393" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="12" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#C73500;rounded=0;fontSize=12;startFill=0;strokeWidth=2;flowAnimation=1;fillColor=#fa6800;" parent="1" source="4" target="7" edge="1">
-          <mxGeometry width="100" relative="1" as="geometry">
-            <mxPoint x="510" y="219" as="sourcePoint" />
-            <mxPoint x="660" y="319" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="600" y="219" />
-              <mxPoint x="600" y="319" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="13" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=light-dark(#C00000,#FFFF00);rounded=0;fontSize=12;startFill=0;strokeWidth=2;flowAnimation=1;" parent="1" source="5" target="7" edge="1">
-          <mxGeometry width="100" relative="1" as="geometry">
-            <mxPoint x="510" y="419" as="sourcePoint" />
-            <mxPoint x="660" y="319" as="targetPoint" />
-            <Array as="points">
-              <mxPoint x="600" y="419" />
-              <mxPoint x="600" y="319" />
-            </Array>
-          </mxGeometry>
-        </mxCell>
-        <mxCell id="14" value="&lt;b&gt;Start&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#ED7100;" parent="1" vertex="1">
-          <mxGeometry x="560" y="180" width="60" height="30" as="geometry" />
-        </mxCell>
-        <mxCell id="15" value="&lt;b&gt;Stop&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#C00000;" parent="1" vertex="1">
-          <mxGeometry x="560" y="420" width="60" height="30" as="geometry" />
-        </mxCell>
-        <mxCell id="17" value="&lt;b&gt;Assumes&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#70AD47;" parent="1" vertex="1">
-          <mxGeometry x="541" y="225" width="60" height="30" as="geometry" />
-        </mxCell>
-        <mxCell id="18" value="&lt;b&gt;Trigger&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#2e75b5;" parent="1" vertex="1">
-          <mxGeometry x="300" y="190" width="60" height="30" as="geometry" />
-        </mxCell>
-        <mxCell id="19" value="&lt;b&gt;Trigger&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#2e75b5;" parent="1" vertex="1">
-          <mxGeometry x="300" y="390" width="60" height="30" as="geometry" />
-        </mxCell>
         <mxCell id="20" value="&lt;font style=&quot;font-size: 24px;&quot;&gt;&lt;b&gt;EC2 Auto Start/Stop Architecture&lt;/b&gt;&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;" parent="1" vertex="1">
           <mxGeometry x="290" y="10" width="400" height="30" as="geometry" />
         </mxCell>
         <mxCell id="21" value="AWS Cloud" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=0;container=1;pointerEvents=0;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud;strokeColor=#232F3E;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#232F3E;dashed=0;" parent="1" vertex="1">
-          <mxGeometry x="120" y="50" width="750" height="450" as="geometry" />
+          <mxGeometry x="57" y="50" width="985" height="762" as="geometry" />
         </mxCell>
         <mxCell id="3" value="Amazon EventBridge&lt;br&gt;Rule: AutoStopEC2Rule&lt;br&gt;(cron: Mon-Fri 11:00 PM AEST)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" parent="21" vertex="1">
-          <mxGeometry x="50" y="308" width="78" height="78" as="geometry" />
+          <mxGeometry x="71" y="556" width="78" height="78" as="geometry" />
         </mxCell>
         <mxCell id="16" value="&lt;b&gt;Assumes&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#70AD47;" parent="21" vertex="1">
-          <mxGeometry x="348" y="57" width="60" height="30" as="geometry" />
+          <mxGeometry x="375" y="74" width="60" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="hzhTxT092Y_kDTalCrva-23" value="IAM Role&lt;br&gt;LambdaEC2Role&lt;br&gt;&lt;div&gt;&lt;br style=&quot;color: rgb(189, 199, 212);&quot;&gt;&lt;/div&gt;" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" vertex="1" parent="21">
-          <mxGeometry x="199" y="13" width="109" height="55" as="geometry" />
+        <mxCell id="hzhTxT092Y_kDTalCrva-23" value="IAM Role&lt;br&gt;LambdaEC2Role&lt;br&gt;&lt;div&gt;&lt;br style=&quot;color: rgb(189, 199, 212);&quot;&gt;&lt;/div&gt;" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" parent="21" vertex="1">
+          <mxGeometry x="295" y="14" width="109" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="5" value="AWS Lambda&lt;br&gt;Function: AutoStopInstance" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="21" vertex="1">
+          <mxGeometry x="514" y="553" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="9" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#2e75b5;rounded=0;fontSize=12;strokeWidth=2;flowAnimation=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" parent="21" source="3" target="5" edge="1">
+          <mxGeometry width="100" relative="1" as="geometry">
+            <mxPoint x="213" y="369" as="sourcePoint" />
+            <mxPoint x="313" y="369" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="425" y="595" />
+              <mxPoint x="425" y="595" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="19" value="&lt;b&gt;Trigger&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#2e75b5;" parent="21" vertex="1">
+          <mxGeometry x="248" y="569" width="60" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="2" value="Amazon EventBridge&lt;br&gt;Rule: AutoStartEC2Rule&lt;br&gt;(cron: Mon-Fri 4:00 AM AEST)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" parent="21" vertex="1">
+          <mxGeometry x="63" y="246" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="4" value="AWS Lambda&lt;br&gt;Function: AutoStartInstance&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="21" vertex="1">
+          <mxGeometry x="397" y="246" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="8" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#2e75b5;rounded=0;fontSize=12;strokeWidth=2;flowAnimation=1;" parent="21" source="2" target="4" edge="1">
+          <mxGeometry width="100" relative="1" as="geometry">
+            <mxPoint x="213" y="169" as="sourcePoint" />
+            <mxPoint x="313" y="169" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="18" value="&lt;b&gt;Trigger&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#2e75b5;" parent="21" vertex="1">
+          <mxGeometry x="231" y="252" width="60" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="7" value="Amazon EC2 Instances&lt;br&gt;Tagged with:&lt;br&gt;- Environment: Development&lt;br&gt;- ApplicationID: xxxxxx&lt;br&gt;- AutoShutdown: Enabled" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ec2;" parent="21" vertex="1">
+          <mxGeometry x="850" y="383" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="12" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#3333FF;rounded=0;fontSize=12;startFill=0;strokeWidth=2;flowAnimation=1;fillColor=#fa6800;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;" parent="21" source="4" target="7" edge="1">
+          <mxGeometry width="100" relative="1" as="geometry">
+            <mxPoint x="453" y="169" as="sourcePoint" />
+            <mxPoint x="888" y="380" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="631" y="285" />
+              <mxPoint x="631" y="334" />
+              <mxPoint x="887" y="334" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="13" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=light-dark(#C00000,#FFFF00);rounded=0;fontSize=12;startFill=0;strokeWidth=2;flowAnimation=1;" parent="21" target="7" edge="1">
+          <mxGeometry width="100" relative="1" as="geometry">
+            <mxPoint x="591" y="589" as="sourcePoint" />
+            <mxPoint x="848" y="418" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="592" y="589" />
+              <mxPoint x="631" y="588" />
+              <mxPoint x="631" y="422" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="15" value="&lt;b&gt;Stop&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#C00000;" parent="21" vertex="1">
+          <mxGeometry x="585" y="468" width="60" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="14" value="&lt;b&gt;Start&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#ED7100;" parent="21" vertex="1">
+          <mxGeometry x="546" y="262" width="60" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="6" value="" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#BF0816;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.role;" parent="21" vertex="1">
+          <mxGeometry x="397" y="11" width="78" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="10" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#70AD47;rounded=0;fontSize=12;startFill=0;dashed=1;dashPattern=1 1;strokeWidth=2;flowAnimation=1;" parent="21" source="6" target="4" edge="1">
+          <mxGeometry width="100" relative="1" as="geometry">
+            <mxPoint x="402" y="90" as="sourcePoint" />
+            <mxPoint x="402" y="120" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="11" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;elbow=vertical;startArrow=none;endFill=1;strokeColor=#70AD47;rounded=0;fontSize=12;startFill=0;dashed=1;dashPattern=1 1;strokeWidth=2;flowAnimation=1;" parent="21" source="6" target="5" edge="1">
+          <mxGeometry width="100" relative="1" as="geometry">
+            <mxPoint x="463" y="60" as="sourcePoint" />
+            <mxPoint x="453" y="330" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="544" y="32" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="17" value="&lt;b&gt;Assumes&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#70AD47;" parent="21" vertex="1">
+          <mxGeometry x="483" y="428" width="60" height="30" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

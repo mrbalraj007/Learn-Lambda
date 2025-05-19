@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy Idle Resources auditing Lambda with CSV output to S3
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: S3 bucket for Lambda code and CSV output
+  LambdaRuntime:
+    Type: String
+    Default: python3.12
+    AllowedValues: [python3.8, python3.9, python3.10, python3.12]
+    Description: Lambda runtime version
+  UseExistingBucket:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true','false']
+    Description: 'Set to true to use an existing bucket, false to create a new one'
+  CodeS3Key:
+    Type: String
+    Default: src/lambda_function.zip
+    Description: S3 key for the Lambda deployment package i.e 'src/lambda_function.zip'
+  LayerS3Key:
+    Type: String
+    Default: src/openpyxl_layer.zip
+    Description: S3 key for the openpyxl layer package i.e 'src/openpyxl_layer.zip'
+
+Conditions:
+  CreateBucket:
+    Fn::Equals:
+      - Ref: UseExistingBucket
+      - 'false'
+
+Resources:
+  OutcomesBucket:
+    Condition: CreateBucket
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: { Ref: S3BucketName }
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: IdleResourcesPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeInstances
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeNetworkInterfaces
+                  - iam:ListRoles
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
+                  - lambda:ListFunctions
+                  - cloudwatch:GetMetricStatistics
+                  - s3:PutObject
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 'arn:aws:logs:*:*:*'
+
+  IdleResourcesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: IdleResourcesFunction
+      Handler: lambda_function.lambda_handler
+      Runtime: { Ref: LambdaRuntime }
+      Role: { 'Fn::GetAtt': ['LambdaExecutionRole','Arn'] }
+      Code:
+        S3Bucket: { Ref: S3BucketName }
+        S3Key: { Ref: CodeS3Key }
+      Environment:
+        Variables:
+          REGION: { Ref: AWS::Region }
+          OUTPUT_BUCKET: { Ref: S3BucketName }
+      Layers:
+        - { Ref: OpenpyxlLayer }
+
+  OpenpyxlLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: OpenpyxlDependencies
+      Content:
+        S3Bucket: { Ref: S3BucketName }
+        S3Key: { Ref: LayerS3Key }
+      CompatibleRuntimes:
+        - { Ref: LambdaRuntime }
+      Description: Dependencies for openpyxl
+
+Outputs:
+  FunctionArn:
+    Description: ARN of the deployed Lambda function
+    Value: { 'Fn::GetAtt': ['IdleResourcesFunction','Arn'] }
+  BucketName:
+    Description: Name of S3 bucket for CSV output
+    Value: { "Fn::If": [ "CreateBucket", { "Ref": "OutcomesBucket" }, { "Ref": "S3BucketName" } ] }
