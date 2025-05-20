@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy Idle Resources auditing Lambda with CSV output to S3
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: S3 bucket for Lambda code and CSV output
+  LambdaRuntime:
+    Type: String
+    Default: python3.12
+    AllowedValues: [python3.8, python3.9, python3.10, python3.12]
+    Description: Lambda runtime version
+  UseExistingBucket:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true','false']
+    Description: 'Set to true to use an existing bucket, false to create a new one'
+  CodeS3Key:
+    Type: String
+    Default: src/lambda_function.zip
+    Description: S3 key for the Lambda deployment package i.e 'src/lambda_function.zip'
+  LayerS3Key:
+    Type: String
+    Default: src/openpyxl_layer.zip
+    Description: S3 key for the openpyxl layer package i.e 'src/openpyxl_layer.zip'
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive audit report notifications
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    ConstraintDescription: Please provide a valid email address.
+
+Conditions:
+  CreateBucket:
+    Fn::Equals:
+      - Ref: UseExistingBucket
+      - 'false'
+
+Resources:
+  OutcomesBucket:
+    Condition: CreateBucket
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: { Ref: S3BucketName }
+
+  # SNS Topic for email notifications
+  AuditNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: AWS Resource Audit Notifications
+      TopicName: !Sub "aws-resource-audit-notifications-${AWS::StackName}"
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "AWSResourceAuditLambdaRole-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AWSResourceAuditPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # EC2 permissions
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeInstances
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeNetworkInterfaces
+                Resource: '*'
+              # IAM permissions
+              - Effect: Allow
+                Action:
+                  - iam:ListRoles
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRolePolicies
+                Resource: '*'
+              # Lambda permissions
+              - Effect: Allow
+                Action:
+                  - lambda:ListFunctions
+                Resource: '*'
+              # CloudWatch permissions
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                Resource: '*'
+              # CloudTrail permissions for creator lookup
+              - Effect: Allow
+                Action:
+                  - cloudtrail:LookupEvents
+                Resource: '*'
+              # S3 permissions for writing reports
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+              # SNS permissions for notifications
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref AuditNotificationTopic
+              # Add S3 CreateBucket permission
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:PutBucketVersioning
+                  - s3:PutBucketEncryption
+                  - s3:PutLifecycleConfiguration
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}'
+
+  IdleResourcesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: IdleResourcesFunction
+      Handler: lambda_function.lambda_handler
+      Runtime: { Ref: LambdaRuntime }
+      Role: { 'Fn::GetAtt': ['LambdaExecutionRole','Arn'] }
+      Code:
+        S3Bucket: { Ref: S3BucketName }
+        S3Key: { Ref: CodeS3Key }
+      Environment:
+        Variables:
+          REGION: { Ref: AWS::Region }
+          OUTPUT_BUCKET: { Ref: S3BucketName }
+          SNS_TOPIC_ARN: !Ref AuditNotificationTopic
+      Layers:
+        - { Ref: OpenpyxlLayer }
+
+  OpenpyxlLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: OpenpyxlDependencies
+      Content:
+        S3Bucket: { Ref: S3BucketName }
+        S3Key: { Ref: LayerS3Key }
+      CompatibleRuntimes:
+        - { Ref: LambdaRuntime }
+      Description: Dependencies for openpyxl
+
+  # Resource Audit Lambda function
+  ResourceAuditLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: LambdaExecutionRole
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-ResourceAudit"
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        S3Bucket: !Ref S3BucketName
+        S3Key: !Ref CodeS3Key    # use the same CodeS3Key parameter
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref S3BucketName
+          REGION: !Ref "AWS::Region"
+          SNS_TOPIC_ARN: !Ref AuditNotificationTopic
+
+  # CloudWatch Events Rule to schedule the audit weekly
+  WeeklyAuditScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${AWS::StackName}-WeeklyAudit"
+      Description: "Run resource audit every Monday at 8 AM UTC"
+      ScheduleExpression: "cron(0 8 ? * MON *)"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt ResourceAuditLambdaFunction.Arn
+          Id: "ResourceAuditTarget"
+
+  # Permission for CloudWatch Events to invoke Lambda
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ResourceAuditLambdaFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt WeeklyAuditScheduleRule.Arn
+
+Outputs:
+  FunctionArn:
+    Description: ARN of the deployed Lambda function
+    Value: { 'Fn::GetAtt': ['IdleResourcesFunction','Arn'] }
+  BucketName:
+    Description: Name of S3 bucket for CSV output
+    Value: { "Fn::If": [ "CreateBucket", { "Ref": "OutcomesBucket" }, { "Ref": "S3BucketName" } ] }
+  AuditReportBucketName:
+    Description: "Name of the S3 bucket containing audit reports"
+    Value: !Ref S3BucketName
+  
+  AuditNotificationTopicArn:
+    Description: "ARN of the SNS topic for audit notifications"
+    Value: !Ref AuditNotificationTopic
+  
+  AuditSchedule:
+    Description: "Schedule for automatic resource audits"
+    Value: "Every Monday at 8 AM UTC"
