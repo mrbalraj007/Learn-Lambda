@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: To create account related SSM parameters
+
+# Ver 0.3 20230417132310
+
+Parameters:
+  InstallationOrg:
+    Description: >-
+      The AWS Organisation this stack belongs to
+    Type: String
+    Default: jcp
+    AllowedValues:
+      - jcp
+  AccountAlias:
+    Type: String
+    Description: >-
+      Account Alias which is used for role prefix of global/ governance IAM roles.
+      In general, it would alse be used for the prefix of relevant AD groups.
+      Required: Yes
+  PermissionsBoundaries:
+    Type: String
+    Description: Create SSM parameters for Permissions Boundaries (if exist)
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+  TagOwner:
+    Type: String
+    Description: The email/ DL of the owner
+    Default: raj10ace@gmail.com
+
+Conditions:
+  PermissionsBoundariesSsmParameters: !Equals [!Ref PermissionsBoundaries, 'true']
+
+Resources:
+  SsmParameterAccountId:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: Account ID
+      Name: !Sub '/${InstallationOrg}/ACCOUNT_ID'
+      Tags:
+        Name: !Sub '${InstallationOrg}_account_id'
+        CreatedBy: !Ref TagOwner
+        ProtectedBy: !Ref TagOwner
+      Tier: Standard
+      Type: String
+      Value: !Ref 'AWS::AccountId'
+  SsmParameterAccountAlias:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: Account Alias
+      Name: !Sub '/${InstallationOrg}/ACCOUNT_ALIAS'
+      Tags:
+        Name: !Sub '${InstallationOrg}_account_alias'
+        CreatedBy: !Ref TagOwner
+        ProtectedBy: !Ref TagOwner
+      Tier: Standard
+      Type: String
+      Value: !Ref 'AccountAlias'
+  SsmParameterPermissionsBoundaryLevel1:
+    Condition: PermissionsBoundariesSsmParameters
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: Permissions Boundary - Level 1
+      Name: !Sub '/${InstallationOrg}/PERMISSIONS_BOUNDARY_LEVEL_1'
+      Tags:
+        Name: !Sub '${InstallationOrg}_permissions_boundary_level_1'
+        CreatedBy: !Ref TagOwner
+        ProtectedBy: !Ref TagOwner
+      Tier: Standard
+      Type: String
+      Value: !Sub '${InstallationOrg}-boundary-level1'
+  SsmParameterPermissionsBoundaryLevel2:
+    Condition: PermissionsBoundariesSsmParameters
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: Permissions Boundary - Level 2
+      Name: !Sub '/${InstallationOrg}/PERMISSIONS_BOUNDARY_LEVEL_2'
+      Tags:
+        Name: !Sub '${InstallationOrg}_permissions_boundary_level_2'
+        CreatedBy: !Ref TagOwner
+        ProtectedBy: !Ref TagOwner
+      Tier: Standard
+      Type: String
+      Value: !Sub '${InstallationOrg}-boundary-level2'
+  SsmParameterPermissionsBoundaryLevel3:
+    Condition: PermissionsBoundariesSsmParameters
+    Type: AWS::SSM::Parameter
+    Properties: 
+      DataType: text
+      Description: Permissions Boundary - Level 3
+      Name: !Sub '/${InstallationOrg}/PERMISSIONS_BOUNDARY_LEVEL_3'
+      Tags:
+        Name: !Sub '${InstallationOrg}_permissions_boundary_level_3'
+        CreatedBy: !Ref TagOwner
+        ProtectedBy: !Ref TagOwner
+      Tier: Standard
+      Type: String
+      Value: !Sub '${InstallationOrg}-boundary-level3'
+
+Outputs:
+  SsmParameterAccountId:
+    Description: Account ID
+    Value: !Ref SsmParameterAccountId
+    Export:
+      Name: !Sub "${AWS::StackName}::AccountId"
+  SsmParameterAccountAlias:
+    Description: Account Alias
+    Value: !Ref SsmParameterAccountAlias
+    Export:
+      Name: !Sub "${AWS::StackName}::AccountAlias"
+  SsmParameterPermissionsBoundaryLevel1:
+    Condition: PermissionsBoundariesSsmParameters
+    Description: Permissions Boundary - Level 1
+    Value: !Ref SsmParameterPermissionsBoundaryLevel1
+    Export:
+      Name: !Sub "${AWS::StackName}::PermissionsBoundaryLevel1"
+  SsmParameterPermissionsBoundaryLevel2:
+    Condition: PermissionsBoundariesSsmParameters
+    Description: Permissions Boundary - Level 2
+    Value: !Ref SsmParameterPermissionsBoundaryLevel2
+    Export:
+      Name: !Sub "${AWS::StackName}::PermissionsBoundaryLevel2"
+  SsmParameterPermissionsBoundaryLevel3:
+    Condition: PermissionsBoundariesSsmParameters
+    Description: Permissions Boundary - Level 3
+    Value: !Ref SsmParameterPermissionsBoundaryLevel3
+    Export:
+      Name: !Sub "${AWS::StackName}::PermissionsBoundaryLevel3"
