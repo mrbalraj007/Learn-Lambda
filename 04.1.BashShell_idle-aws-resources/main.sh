@@ -98,36 +98,58 @@ run_check() {
 }
 
 ALL_REGIONS=$(aws ec2 describe-regions --query "Regions[].RegionName" --output text || echo "")
+DEFAULT_REGION=$(aws configure get region 2>/dev/null || echo "us-east-1")
+
+# Get region selection from user
+echo "Available AWS regions:"
+echo "0) All regions (warning: this could take a long time)"
+count=1
+for region in $ALL_REGIONS; do
+    echo "$count) $region"
+    count=$((count + 1))
+done
+echo "$count) Specify custom region(s)"
+
+echo -n "Enter your choice (default is $DEFAULT_REGION): "
+read -r CHOICE < /dev/tty
+
+REGIONS_TO_SCAN=""
+if [[ -z "$CHOICE" ]]; then
+    # Default to current region
+    REGIONS_TO_SCAN=$DEFAULT_REGION
+    echo "Using default region: $DEFAULT_REGION"
+elif [[ "$CHOICE" == "0" ]]; then
+    # All regions
+    REGIONS_TO_SCAN=$ALL_REGIONS
+    echo "Scanning all regions"
+elif [[ "$CHOICE" == "$count" ]]; then
+    # Custom region input
+    echo -n "Enter region name(s) separated by spaces: "
+    read -r REGIONS_TO_SCAN < /dev/tty
+    if [[ -z "$REGIONS_TO_SCAN" ]]; then
+        REGIONS_TO_SCAN=$DEFAULT_REGION
+        echo "No regions specified, using default: $DEFAULT_REGION"
+    fi
+else
+    # Selected numbered region
+    count=1
+    for region in $ALL_REGIONS; do
+        if [[ "$count" == "$CHOICE" ]]; then
+            REGIONS_TO_SCAN=$region
+            break
+        fi
+        count=$((count + 1))
+    done
+    
+    if [[ -z "$REGIONS_TO_SCAN" ]]; then
+        REGIONS_TO_SCAN=$DEFAULT_REGION
+        echo "Invalid choice, using default: $DEFAULT_REGION"
+    fi
+fi
 
 REGIONS_SCANNED=0
-skip_all=false
 
-for REGION in $ALL_REGIONS; do
-    if [ "$skip_all" = false ]; then
-        echo -n "🗺️  Scan region '$REGION'? (y/n, or 'a' to skip ALL remaining): "
-        read -r REPLY < /dev/tty
-        REPLY=${REPLY,,}  # lowercase
-
-        if [[ "$REPLY" == "y" ]]; then
-            :
-        elif [[ "$REPLY" == "a" || "$REPLY" == "n" ]]; then
-            skip_all=true
-            if [[ "$REPLY" == "n" ]]; then
-                echo "⏭️ Skipping region '$REGION'"
-                continue
-            fi
-            echo "⏭️ Skipping all remaining regions."
-            continue
-        else
-            echo "❌ Invalid input, assuming 'n'. Skipping region '$REGION'"
-            skip_all=true
-            continue
-        fi
-    else
-        echo "⏭️ Skipping region '$REGION'"
-        continue
-    fi
-
+for REGION in $REGIONS_TO_SCAN; do
     REGIONS_SCANNED=$((REGIONS_SCANNED + 1))
     aws configure set region "$REGION"
     echo "<div class='section'>"
