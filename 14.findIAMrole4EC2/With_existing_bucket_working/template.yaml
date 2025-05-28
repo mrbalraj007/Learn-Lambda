@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy a Lambda function that finds IAM roles attached to EC2 instances'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the existing S3 bucket to store CSV output
+    
+  ScheduleExpression:
+    Type: String
+    Description: Schedule expression for running the Lambda function
+    Default: 'rate(7 days)'
+    
+  AwsRegion:
+    Type: String
+    Description: AWS Region to deploy and scan first
+    Default: 'us-east-1'
+    AllowedValues:
+      - 'us-east-1'
+      - 'us-east-2'
+      - 'us-west-1'
+      - 'us-west-2'
+      - 'eu-west-1'
+      - 'eu-west-2'
+      - 'eu-central-1'
+      - 'ap-southeast-1'
+      - 'ap-southeast-2'
+      - 'ap-northeast-1'
+      - 'ap-northeast-2'
+      - 'ap-south-1'
+      - 'sa-east-1'
+      - 'ca-central-1'
+
+Resources:
+  # IAM role for Lambda function
+  LambdaExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: EC2AndIAMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:DescribeRegions'
+                  - 'iam:GetRole'
+                  - 'iam:GetInstanceProfile'
+                  - 'iam:ListRolePolicies'
+                  - 'iam:GetRolePolicy'
+                  - 'iam:ListAttachedRolePolicies'
+                  - 'iam:GetPolicy'
+                  - 'iam:GetPolicyVersion'
+                Resource: '*'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+
+  # Lambda function
+  EC2RoleScannerFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: EC2IAMRoleFinder
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.13
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref S3BucketName
+          STARTING_REGION: !Ref AwsRegion
+      Code:
+        ZipFile: !Sub |
+          import boto3
+          import csv
+          import io
+          import datetime
+          import os
+          import json
+
+          def lambda_handler(event, context):
+              output_bucket = os.environ['OUTPUT_BUCKET']
+              main_region = os.environ['STARTING_REGION']
+              csv_data = io.StringIO()
+              writer = csv.writer(csv_data)
+              writer.writerow(['Region', 'Instance ID', 'Instance Name', 'IAM Role Name', 'Role Creation Date', 'Policy Name', 'Policy Type'])
+              
+              # Get all AWS regions
+              ec2_client = boto3.client('ec2', region_name=main_region)
+              regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
+              
+              for region in regions:
+                  print(f"Scanning region: {region}")
+                  ec2_client = boto3.client('ec2', region_name=region)
+                  iam_client = boto3.client('iam')
+                  
+                  paginator = ec2_client.get_paginator('describe_instances')
+                  for page in paginator.paginate():
+                      for reservation in page['Reservations']:
+                          for instance in reservation['Instances']:
+                              instance_id = instance['InstanceId']
+                              
+                              # Get instance name if it has a Name tag
+                              instance_name = "N/A"
+                              if 'Tags' in instance:
+                                  for tag in instance['Tags']:
+                                      if tag['Key'] == 'Name':
+                                          instance_name = tag['Value']
+                              
+                              # Check if instance has an IAM role
+                              if 'IamInstanceProfile' in instance:
+                                  profile_arn = instance['IamInstanceProfile']['Arn']
+                                  profile_id = profile_arn.split('/')[-1]
+                                  
+                                  try:
+                                      # Get the role name from the instance profile
+                                      response = iam_client.get_instance_profile(InstanceProfileName=profile_id)
+                                      for role in response['InstanceProfile']['Roles']:
+                                          role_name = role['RoleName']
+                                          
+                                          # Get role creation date
+                                          role_info = iam_client.get_role(RoleName=role_name)
+                                          role_creation_date = role_info['Role']['CreateDate'].strftime('%Y-%m-%d %H:%M:%S')
+                                          
+                                          # Get attached policies
+                                          attached_policies = iam_client.list_attached_role_policies(RoleName=role_name)
+                                          
+                                          # Handle attached policies
+                                          if len(attached_policies['AttachedPolicies']) > 0:
+                                              for policy in attached_policies['AttachedPolicies']:
+                                                  policy_name = policy['PolicyName']
+                                                  policy_arn = policy['PolicyArn']
+                                                  policy_type = "AWS Managed" if "arn:aws:iam::aws:" in policy_arn else "Customer Managed"
+                                                  
+                                                  writer.writerow([
+                                                      region, 
+                                                      instance_id, 
+                                                      instance_name, 
+                                                      role_name, 
+                                                      role_creation_date, 
+                                                      policy_name, 
+                                                      policy_type
+                                                  ])
+                                          
+                                          # Handle inline policies
+                                          inline_policies = iam_client.list_role_policies(RoleName=role_name)
+                                          for policy_name in inline_policies['PolicyNames']:
+                                              writer.writerow([
+                                                  region, 
+                                                  instance_id, 
+                                                  instance_name, 
+                                                  role_name, 
+                                                  role_creation_date, 
+                                                  policy_name, 
+                                                  "Inline Policy"
+                                              ])
+                                              
+                                          # If no policies attached, write a row with empty policy info
+                                          if len(attached_policies['AttachedPolicies']) == 0 and len(inline_policies['PolicyNames']) == 0:
+                                              writer.writerow([
+                                                  region, 
+                                                  instance_id, 
+                                                  instance_name, 
+                                                  role_name, 
+                                                  role_creation_date, 
+                                                  "No policies attached", 
+                                                  "N/A"
+                                              ])
+                                  except Exception as e:
+                                      print(f"Error processing instance {instance_id}: {str(e)}")
+                                      writer.writerow([
+                                          region, 
+                                          instance_id, 
+                                          instance_name, 
+                                          "Error retrieving role", 
+                                          "", 
+                                          "", 
+                                          ""
+                                      ])
+              
+              # Upload CSV to S3 in the 'report' folder
+              timestamp = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+              s3_client = boto3.client('s3')
+              filename = f'ec2-iam-roles-{timestamp}.csv'
+              s3_key = f'report/{filename}'  # Save to the report folder
+              s3_client.put_object(
+                  Bucket=output_bucket,
+                  Key=s3_key,
+                  Body=csv_data.getvalue(),
+                  ContentType='text/csv'
+              )
+              
+              return {
+                  'statusCode': 200,
+                  'body': f'CSV file uploaded to s3://{output_bucket}/{s3_key}'
+              }
+
+  # EventBridge rule to trigger Lambda on a schedule
+  ScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Description: 'Scheduled rule to trigger the EC2 IAM role scanner'
+      ScheduleExpression: !Ref ScheduleExpression
+      State: 'ENABLED'
+      Targets:
+        - Arn: !GetAtt EC2RoleScannerFunction.Arn
+          Id: 'EC2RoleScannerFunction'
+
+  # Permission for EventBridge to invoke the Lambda function
+  PermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref EC2RoleScannerFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: 'events.amazonaws.com'
+      SourceArn: !GetAtt ScheduledRule.Arn
+  
+  # Function URL for manual invocation
+  FunctionUrl:
+    Type: 'AWS::Lambda::Url'
+    Properties:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt EC2RoleScannerFunction.Arn
+
+  # Permission for Lambda function URL
+  FunctionUrlPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref EC2RoleScannerFunction
+      Action: 'lambda:InvokeFunctionUrl'
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+Outputs:
+  LambdaFunctionName:
+    Description: 'Name of the Lambda function'
+    Value: !Ref EC2RoleScannerFunction
+    
+  LambdaFunctionARN:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt EC2RoleScannerFunction.Arn
+    
+  S3BucketName:
+    Description: 'Name of the S3 bucket'
+    Value: !Ref S3BucketName
+    
+  FunctionUrl:
+    Description: 'URL to manually invoke the Lambda function'
+    Value: !GetAtt FunctionUrl.FunctionUrl
