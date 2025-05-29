@@ -1,0 +1,994 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Resource Audit - Automated weekly scanning of AWS resources'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the existing S3 bucket where reports will be stored
+  
+  ReportsPrefix:
+    Type: String
+    Default: "reports"
+    Description: S3 prefix/directory where reports will be stored
+  
+  EmailAddress:
+    Type: String
+    Description: Email address to receive AWS resource audit reports
+    
+  TargetRegion:
+    Type: String
+    Default: ''
+    Description: AWS region to scan (leave empty to use Lambda's region)
+    
+  ScheduleExpression:
+    Type: String
+    Default: "rate(7 days)"
+    Description: Schedule expression for running the audit (default is once per week)
+
+Conditions:
+  UseDefaultRegion: !Equals [!Ref TargetRegion, '']
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+      Policies:
+        - PolicyName: LambdaResourceAuditPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${S3BucketName}/${ReportsPrefix}/*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref ResourceAuditTopic
+
+  ResourceAuditFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref S3BucketName
+          S3_PREFIX: !Ref ReportsPrefix
+          SNS_TOPIC_ARN: !Ref ResourceAuditTopic
+          TARGET_REGION: !If [UseDefaultRegion, !Ref 'AWS::Region', !Ref TargetRegion]
+      Code:
+        ZipFile: |
+          import boto3
+          import datetime
+          import os
+          import json
+          from botocore.exceptions import ClientError
+          import time
+
+          def lambda_handler(event, context):
+              # Configuration
+              bucket_name = os.environ['S3_BUCKET']
+              prefix = os.environ['S3_PREFIX']
+              sns_topic_arn = os.environ['SNS_TOPIC_ARN']
+              target_region = os.environ['TARGET_REGION']
+              
+              # Initialize clients
+              s3 = boto3.client('s3')
+              sns = boto3.client('sns')
+              
+              # Generate the report
+              timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+              report_name = f"aws_audit_report_{timestamp}.html"
+              report_content = generate_report(target_region)
+              
+              # Upload to S3
+              s3_key = f"{prefix.rstrip('/')}/{report_name}"
+              try:
+                  s3.put_object(
+                      Body=report_content,
+                      Bucket=bucket_name,
+                      Key=s3_key,
+                      ContentType='text/html'
+                  )
+                  
+                  # Get presigned URL for easy access
+                  presigned_url = s3.generate_presigned_url(
+                      'get_object',
+                      Params={'Bucket': bucket_name, 'Key': s3_key},
+                      ExpiresIn=604800  # URL valid for 7 days
+                  )
+                  
+                  # Notify via SNS
+                  message = f"AWS Resource Audit Report is ready.\n\nAccess the report here: {presigned_url}\n\nThis link will expire in 7 days."
+                  sns.publish(
+                      TopicArn=sns_topic_arn,
+                      Message=message,
+                      Subject="AWS Resource Audit Report Ready"
+                  )
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('AWS Resource Audit completed successfully!')
+                  }
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f'Error: {str(e)}')
+                  }
+
+          def generate_report(region):
+              """Generate the HTML report with all audit checks"""
+              timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+              account_id = get_account_id()
+              
+              # Start building HTML
+              html = f"""<!DOCTYPE html>
+          <html lang='en'>
+          <head>
+            <meta charset='UTF-8'>
+            <title>AWS Audit Report</title>
+            <style>
+              header {{
+                  background: #2f80ed;
+                  color: white;
+                  padding: 40px 20px;
+                  text-align: center;
+                  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+              }}
+              header h1 {{
+                  margin: 0;
+                  font-size: 36px;
+              }}
+              .container {{
+                  max-width: 960px;
+                  margin: 30px auto;
+                  padding: 0 20px;
+              }}
+              .info {{
+                  background: #ffffff;
+                  padding: 20px;
+                  border-radius: 10px;
+                  margin-bottom: 30px;
+                  box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+              }}
+              .section {{
+                  background: #ffffff;
+                  border-left: 6px solid #2f80ed;
+                  border-radius: 10px;
+                  padding: 20px;
+                  margin: 20px 0;
+                  box-shadow: 0 3px 10px rgba(0,0,0,0.06);
+              }}
+              .section h2 {{
+                  margin-top: 0;
+                  color: #2c3e50;
+                  font-size: 20px;
+                  display: flex;
+                  align-items: center;
+              }}
+              .section h2 span {{
+                  font-size: 24px;
+                  margin-right: 10px;
+              }}
+              pre {{
+                  background: #f9fafc;
+                  padding: 15px;
+                  border-radius: 6px;
+                  overflow-x: auto;
+                  font-size: 14px;
+                  line-height: 1.5;
+                  border: 1px solid #e0e6ed;
+              }}
+              .status-ok {{ color: #27ae60; font-weight: bold; }}
+              .status-warn {{ color: #e67e22; font-weight: bold; }}
+              .status-fail {{ color: #c0392b; font-weight: bold; }}
+              footer {{
+                  text-align: center;
+                  font-size: 13px;
+                  padding: 30px 10px;
+                  color: #777;
+              }}
+            </style>
+          </head>
+          <body>
+          <header><h1>📊 AWS Cost Audit Report</h1></header>
+          <div class='container'>
+          <div class='info'>
+            <p><strong>Date:</strong> {timestamp}</p>
+            <p><strong>AWS Account ID:</strong> {account_id}</p>
+            <p><strong>Region:</strong> {region}</p>
+          </div>
+          """
+              
+              # Add region section
+              html += f"""<div class='section'>
+          <h2><span>🌍</span> Region: {region}</h2>
+          """
+              
+              # Run all checks
+              html += run_check("💰 Budget Alerts Check", check_budgets(), "💰")
+              html += run_check("🏷️ Untagged Resources Check", check_untagged_resources(), "🏷️")
+              html += run_check("🛌 Idle EC2 Resources Check", check_idle_ec2(), "🛌")
+              html += run_check("♻️ S3 Lifecycle Policies Check", check_s3_lifecycle(), "♻️")
+              html += run_check("📅 Old RDS Snapshots Check", check_old_rds_snapshots(), "📅")
+              html += run_check("🧹 Forgotten EBS Volumes Check", check_forgotten_ebs(), "🧹")
+              html += run_check("🌐 Data Transfer Risks Check", check_data_transfer_risks(), "🌐")
+              html += run_check("💸 On-Demand EC2 Instances Check", check_on_demand_instances(), "💸")
+              html += run_check("🛑 Idle Load Balancers Check", check_idle_load_balancers(), "🛑")
+              html += run_check("🌍 Route 53 Records Check", check_route53(), "🌍")
+              html += run_check("☸️ EKS Clusters Check", check_eks_clusters(), "☸️")
+              html += run_check("🔐 IAM Usage Check", check_iam_usage(), "🔐")
+              html += run_check("🛡️ Security Groups Check", check_security_groups(), "🛡️")
+              
+              html += "<h3 class='status-ok'>✅ AWS Audit Completed for region: {region}</h3>"
+              html += "</div>"
+              
+              # Close HTML
+              html += "<h2 class='status-ok'>✅ AWS Audit Completed</h2>"
+              html += "</div></body></html>"
+              
+              return html
+              
+          def run_check(title, content, icon):
+              return f"""
+          <div class='section'>
+          <h2><span>{icon}</span> {title}</h2>
+          <pre>{content}</pre>
+          </div>
+          """
+          
+          def get_account_id():
+              sts = boto3.client('sts')
+              try:
+                  return sts.get_caller_identity()['Account']
+              except:
+                  return "Unknown"
+                  
+          def log_info(message):
+              return f"ℹ️  {message}\n"
+              
+          def log_warn(message):
+              return f"⚠️  {message}\n"
+              
+          def log_success(message):
+              return f"✅ {message}\n"
+              
+          def log_error(message):
+              return f"❌ {message}\n"
+          
+          # Implementing the functionality from the shell scripts
+          def check_budgets():
+              results = log_info("Checking budgets for AWS Account")
+              results += "--------------------------------------------------\n"
+              
+              try:
+                  budgets = boto3.client('budgets')
+                  account_id = get_account_id()
+                  
+                  budget_list = budgets.describe_budgets(AccountId=account_id)
+                  
+                  if not budget_list.get('Budgets'):
+                      results += log_warn("No budgets found for this account.")
+                      return results
+                      
+                  for budget in budget_list['Budgets']:
+                      budget_name = budget['BudgetName']
+                      results += log_info(f"Budget: {budget_name}")
+                      
+                      notifications = budgets.describe_notifications_for_budget(
+                          AccountId=account_id,
+                          BudgetName=budget_name
+                      )
+                      
+                      if not notifications.get('Notifications'):
+                          results += log_warn("  No alerts (notifications) configured!")
+                      else:
+                          results += log_success("  Budget alerts are configured.")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking budgets: {str(e)}")
+                  
+              return results
+          
+          def check_untagged_resources():
+              results = log_info("Checking untagged resources")
+              results += "-------------------------------------------------------------\n"
+              
+              try:
+                  ec2 = boto3.client('ec2')
+                  s3 = boto3.client('s3')
+                  rds = boto3.client('rds')
+                  lambda_client = boto3.client('lambda')
+                  
+                  # EC2 Instances
+                  results += log_info("🔎 Checking EC2 Instances...")
+                  instances = ec2.describe_instances()
+                  for reservation in instances.get('Reservations', []):
+                      for instance in reservation.get('Instances', []):
+                          instance_id = instance['InstanceId']
+                          tags = instance.get('Tags', [])
+                          
+                          if not tags:
+                              results += log_warn(f"  Untagged EC2 Instance: {instance_id}")
+                          else:
+                              results += log_success(f"  Tagged EC2 Instance: {instance_id}")
+                              results += "    Tags:\n"
+                              for tag in tags:
+                                  results += f"      - {tag['Key']}: {tag['Value']}\n"
+                  
+                  # EBS Volumes
+                  results += log_info("🔎 Checking EBS Volumes...")
+                  volumes = ec2.describe_volumes()
+                  for volume in volumes.get('Volumes', []):
+                      volume_id = volume['VolumeId']
+                      tags = volume.get('Tags', [])
+                      
+                      if not tags:
+                          results += log_warn(f"  Untagged EBS Volume: {volume_id}")
+                      else:
+                          results += log_success(f"  Tagged EBS Volume: {volume_id}")
+                          results += "    Tags:\n"
+                          for tag in tags:
+                              results += f"      - {tag['Key']}: {tag['Value']}\n"
+                  
+                  # S3 Buckets
+                  results += log_info("🔎 Checking S3 Buckets...")
+                  buckets = s3.list_buckets()
+                  for bucket in buckets.get('Buckets', []):
+                      bucket_name = bucket['Name']
+                      try:
+                          tags = s3.get_bucket_tagging(Bucket=bucket_name).get('TagSet', [])
+                          results += log_success(f"  Tagged S3 Bucket: {bucket_name}")
+                          results += "    Tags:\n"
+                          for tag in tags:
+                              results += f"      - {tag['Key']}: {tag['Value']}\n"
+                      except ClientError as e:
+                          if e.response['Error']['Code'] == 'NoSuchTagSet':
+                              results += log_warn(f"  Untagged S3 Bucket: {bucket_name}")
+                          else:
+                              results += log_error(f"  Error checking tags for S3 Bucket {bucket_name}: {str(e)}")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking untagged resources: {str(e)}")
+                  
+              return results
+
+          def check_idle_ec2():
+              results = log_info("Checking for idle or oversized EC2 instances")
+              results += "------------------------------------------------------------\n"
+              
+              try:
+                  ec2 = boto3.client('ec2')
+                  cloudwatch = boto3.client('cloudwatch')
+                  
+                  # Define thresholds
+                  cpu_threshold = 10
+                  days = 3
+                  
+                  # Get running instances
+                  instances = ec2.describe_instances(
+                      Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
+                  )
+                  
+                  if not instances.get('Reservations'):
+                      results += log_warn("No running EC2 instances found.")
+                      return results
+                  
+                  # Calculate start time
+                  end_time = datetime.datetime.utcnow()
+                  start_time = end_time - datetime.timedelta(days=days)
+                  
+                  for reservation in instances.get('Reservations', []):
+                      for instance in reservation.get('Instances', []):
+                          instance_id = instance['InstanceId']
+                          instance_type = instance['InstanceType']
+                          
+                          # Get CPU utilization
+                          response = cloudwatch.get_metric_statistics(
+                              Namespace='AWS/EC2',
+                              MetricName='CPUUtilization',
+                              Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+                              StartTime=start_time,
+                              EndTime=end_time,
+                              Period=86400,
+                              Statistics=['Average']
+                          )
+                          
+                          datapoints = response.get('Datapoints', [])
+                          if not datapoints:
+                              results += log_warn(f"Idle Instance: {instance_id} ({instance_type}) — No CPU data")
+                              continue
+                              
+                          avg_cpu = sum(point['Average'] for point in datapoints) / len(datapoints)
+                          
+                          if avg_cpu < cpu_threshold:
+                              results += log_warn(f"Idle Instance: {instance_id} ({instance_type}) — Avg CPU: {avg_cpu:.2f}%")
+                          else:
+                              results += log_success(f"Active Instance: {instance_id} ({instance_type}) — Avg CPU: {avg_cpu:.2f}%")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking idle EC2 instances: {str(e)}")
+                  
+              return results
+
+          def check_s3_lifecycle():
+              results = log_info("Checking S3 buckets for missing lifecycle policies")
+              results += "------------------------------------------------------------------\n"
+              
+              try:
+                  s3 = boto3.client('s3')
+                  buckets = s3.list_buckets()
+                  
+                  if not buckets.get('Buckets'):
+                      results += log_warn("No S3 buckets found in this account.")
+                      return results
+                  
+                  for bucket in buckets.get('Buckets', []):
+                      bucket_name = bucket['Name']
+                      
+                      try:
+                          lifecycle = s3.get_bucket_lifecycle_configuration(Bucket=bucket_name)
+                          results += log_success(f"✅ Bucket with lifecycle policy: {bucket_name}")
+                          
+                          for rule in lifecycle.get('Rules', []):
+                              rule_id = rule.get('ID', 'N/A')
+                              status = rule.get('Status', 'N/A')
+                              prefix = rule.get('Filter', {}).get('Prefix', 'N/A')
+                              results += f"    ↳ ID: {rule_id}, Prefix: {prefix}, Status: {status}\n"
+                              
+                      except ClientError as e:
+                          if e.response['Error']['Code'] == 'NoSuchLifecycleConfiguration':
+                              results += log_warn(f"🗃️  Bucket without lifecycle policy: {bucket_name}")
+                          else:
+                              results += log_error(f"Error checking lifecycle for bucket {bucket_name}: {str(e)}")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking S3 lifecycle policies: {str(e)}")
+                  
+              return results
+
+          def check_old_rds_snapshots():
+              results = log_info("Checking for old RDS snapshots")
+              results += "--------------------------------------------------------------------------------\n"
+              
+              try:
+                  rds = boto3.client('rds')
+                  threshold_days = 30
+                  
+                  # Calculate cutoff date
+                  cutoff_date = datetime.datetime.utcnow() - datetime.timedelta(days=threshold_days)
+                  
+                  # Get all snapshots
+                  snapshots = rds.describe_db_snapshots()
+                  
+                  if not snapshots.get('DBSnapshots'):
+                      results += log_success(f"♻️  No RDS snapshots found.")
+                      return results
+                  
+                  old_found = False
+                  for snapshot in snapshots.get('DBSnapshots', []):
+                      snapshot_id = snapshot['DBSnapshotIdentifier']
+                      instance_id = snapshot['DBInstanceIdentifier']
+                      create_time = snapshot['SnapshotCreateTime']
+                      snapshot_type = snapshot['SnapshotType']
+                      
+                      if create_time < cutoff_date:
+                          old_found = True
+                          results += f"⚠️  Snapshot: {snapshot_id}\n"
+                          results += f"    Instance: {instance_id}\n"
+                          results += f"     Created: {create_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                          results += f"     Type: {snapshot_type}\n\n"
+                  
+                  if not old_found:
+                      results += log_success(f"♻️  No RDS snapshots older than {threshold_days} days.")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking old RDS snapshots: {str(e)}")
+                  
+              return results
+
+          def check_forgotten_ebs():
+              results = log_info("Checking for unattached (forgotten) EBS volumes")
+              results += "---------------------------------------------------------------\n"
+              
+              try:
+                  ec2 = boto3.client('ec2')
+                  
+                  # Get all volumes with available status
+                  volumes = ec2.describe_volumes(
+                      Filters=[{'Name': 'status', 'Values': ['available']}]
+                  )
+                  
+                  if not volumes.get('Volumes'):
+                      results += log_success("🧹 No unattached EBS volumes found.")
+                      return results
+                  
+                  for volume in volumes.get('Volumes', []):
+                      volume_id = volume['VolumeId']
+                      size = volume['Size']
+                      create_time = volume['CreateTime']
+                      tags = volume.get('Tags', [])
+                      
+                      results += f"⚠️  Unattached EBS Volume: {volume_id}\n"
+                      results += f"    ↳ Size: {size} GiB\n"
+                      results += f"    ↳ Created: {create_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                      
+                      if tags:
+                          tag_str = ", ".join([f"{tag['Key']}={tag['Value']}" for tag in tags])
+                          results += f"    ↳ Tags: {tag_str}\n\n"
+                      else:
+                          results += "    ↳ Tags: None\n\n"
+              
+              except Exception as e:
+                  results += log_error(f"Error checking forgotten EBS volumes: {str(e)}")
+                  
+              return results
+
+          def check_data_transfer_risks():
+              results = log_info("Auditing data transfer risks")
+              results += "--------------------------------------------------\n"
+              
+              try:
+                  ec2 = boto3.client('ec2')
+                  
+                  # 1. Detect EC2 instances with public IPs
+                  results += log_info("🔍 EC2 Instances with Public IPs:")
+                  
+                  instances = ec2.describe_instances(
+                      Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
+                  )
+                  
+                  for reservation in instances.get('Reservations', []):
+                      for instance in reservation.get('Instances', []):
+                          instance_id = instance['InstanceId']
+                          public_ip = instance.get('PublicIpAddress')
+                          
+                          if public_ip:
+                              results += f"⚠️  Instance: {instance_id} has Public IP: {public_ip}\n"
+                  
+                  # 2. Detect allocated Elastic IPs
+                  results += log_info("🔍 Elastic IP Addresses (EIPs):")
+                  
+                  eips = ec2.describe_addresses()
+                  
+                  if not eips.get('Addresses'):
+                      results += log_success("✅ No Elastic IPs allocated.")
+                  else:
+                      for eip in eips.get('Addresses', []):
+                          public_ip = eip['PublicIp']
+                          instance_id = eip.get('InstanceId')
+                          
+                          if not instance_id:
+                              results += f"⚠️  Unused Elastic IP: {public_ip}\n"
+                          else:
+                              results += f"✅ Elastic IP {public_ip} attached to instance: {instance_id}\n"
+                  
+                  # 3. Detect subnets spread across AZs
+                  results += log_info("🔍 Subnet-AZ Mapping (check same-AZ design):")
+                  
+                  subnets = ec2.describe_subnets()
+                  
+                  for subnet in subnets.get('Subnets', []):
+                      subnet_id = subnet['SubnetId']
+                      az = subnet['AvailabilityZone']
+                      
+                      name = "N/A"
+                      for tag in subnet.get('Tags', []):
+                          if tag['Key'] == 'Name':
+                              name = tag['Value']
+                              break
+                      
+                      results += f"  ↳ Subnet: {name if name != 'N/A' else subnet_id}, AZ: {az}\n"
+                  
+                  # 4. Detect S3 and DynamoDB VPC Endpoints
+                  results += log_info("🔍 VPC Endpoints (S3 & DynamoDB):")
+                  
+                  vpc_endpoints = ec2.describe_vpc_endpoints()
+                  
+                  s3_endpoint = None
+                  ddb_endpoint = None
+                  
+                  for endpoint in vpc_endpoints.get('VpcEndpoints', []):
+                      service_name = endpoint['ServiceName']
+                      
+                      if 's3' in service_name.lower():
+                          s3_endpoint = service_name
+                      elif 'dynamodb' in service_name.lower():
+                          ddb_endpoint = service_name
+                  
+                  if not s3_endpoint:
+                      results += log_warn("No VPC endpoint for S3 detected")
+                  else:
+                      results += log_success(f"S3 VPC endpoint present: {s3_endpoint}")
+                  
+                  if not ddb_endpoint:
+                      results += log_warn("No VPC endpoint for DynamoDB detected")
+                  else:
+                      results += log_success(f"DynamoDB VPC endpoint present: {ddb_endpoint}")
+                  
+                  results += log_success("Data transfer risk audit completed.")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking data transfer risks: {str(e)}")
+                  
+              return results
+
+          def check_on_demand_instances():
+              results = log_info("Checking for On-Demand EC2 instances")
+              results += "----------------------------------------------------\n"
+              
+              try:
+                  ec2 = boto3.client('ec2')
+                  
+                  instances = ec2.describe_instances(
+                      Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
+                  )
+                  
+                  on_demand_count = 0
+                  on_demand_instances = []
+                  
+                  for reservation in instances.get('Reservations', []):
+                      for instance in reservation.get('Instances', []):
+                          instance_id = instance['InstanceId']
+                          instance_type = instance['InstanceType']
+                          lifecycle = instance.get('InstanceLifecycle')
+                          
+                          # If lifecycle is None, it's On-Demand
+                          if not lifecycle:
+                              on_demand_count += 1
+                              on_demand_instances.append((instance_id, instance_type))
+                  
+                  if on_demand_count == 0:
+                      results += log_success("No On-Demand instances detected.")
+                  else:
+                      for instance_id, instance_type in on_demand_instances:
+                          results += f"💸 On-Demand Instance: {instance_id} ({instance_type})\n"
+                          
+                      results += log_warn(f"Total On-Demand instances: {on_demand_count}")
+                      results += log_info("Consider using Reserved Instances or Savings Plans to save costs.")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking on-demand instances: {str(e)}")
+                  
+              return results
+
+          def check_idle_load_balancers():
+              results = log_info("Checking ALBs and NLBs for idle state")
+              results += "--------------------------------------------------------------------------\n"
+              
+              try:
+                  elbv2 = boto3.client('elbv2')
+                  cloudwatch = boto3.client('cloudwatch')
+                  
+                  days = 3
+                  end_time = datetime.datetime.utcnow()
+                  start_time = end_time - datetime.timedelta(days=days)
+                  
+                  # Check ALBs
+                  results += log_info("🔍 Checking Application Load Balancers (ALB):")
+                  
+                  albs = elbv2.describe_load_balancers()
+                  
+                  for lb in albs.get('LoadBalancers', []):
+                      if lb['Type'] != 'application':
+                          continue
+                          
+                      lb_name = lb['LoadBalancerName']
+                      lb_arn = lb['LoadBalancerArn']
+                      
+                      response = cloudwatch.get_metric_statistics(
+                          Namespace='AWS/ApplicationELB',
+                          MetricName='RequestCount',
+                          Dimensions=[{'Name': 'LoadBalancer', 'Value': lb_name}],
+                          StartTime=start_time,
+                          EndTime=end_time,
+                          Period=86400,
+                          Statistics=['Sum']
+                      )
+                      
+                      datapoints = response.get('Datapoints', [])
+                      request_count = sum([point['Sum'] for point in datapoints]) if datapoints else 0
+                      
+                      if request_count < 1:
+                          results += log_warn(f"Idle ALB: {lb_name} — RequestCount: 0")
+                      else:
+                          results += log_success(f"Active ALB: {lb_name} — Requests in last {days} days: {request_count}")
+                  
+                  # Check NLBs
+                  results += log_info("🔍 Checking Network Load Balancers (NLB):")
+                  
+                  for lb in albs.get('LoadBalancers', []):
+                      if lb['Type'] != 'network':
+                          continue
+                          
+                      lb_name = lb['LoadBalancerName']
+                      lb_arn = lb['LoadBalancerArn']
+                      
+                      response = cloudwatch.get_metric_statistics(
+                          Namespace='AWS/NetworkELB',
+                          MetricName='ActiveFlowCount',
+                          Dimensions=[{'Name': 'LoadBalancer', 'Value': lb_name}],
+                          StartTime=start_time,
+                          EndTime=end_time,
+                          Period=86400,
+                          Statistics=['Sum']
+                      )
+                      
+                      datapoints = response.get('Datapoints', [])
+                      flow_count = sum([point['Sum'] for point in datapoints]) if datapoints else 0
+                      
+                      if flow_count < 1:
+                          results += log_warn(f"Idle NLB: {lb_name} — ActiveFlowCount: 0")
+                      else:
+                          results += log_success(f"Active NLB: {lb_name} — Flows in last {days} days: {flow_count}")
+                  
+                  results += log_success("Load balancer traffic audit completed.")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking idle load balancers: {str(e)}")
+                  
+              return results
+
+          def check_route53():
+              results = log_info("Checking Route 53 DNS records and hosted zones")
+              results += "---------------------------------------------------\n"
+              
+              try:
+                  route53 = boto3.client('route53')
+                  
+                  # Get hosted zones
+                  hosted_zones = route53.list_hosted_zones()
+                  
+                  if not hosted_zones.get('HostedZones'):
+                      results += log_warn("No Route 53 hosted zones found.")
+                      return results
+                  
+                  for zone in hosted_zones.get('HostedZones', []):
+                      zone_id = zone['Id']
+                      zone_name = zone['Name']
+                      
+                      results += f"\n{log_info('🔍 Checking Hosted Zone: ' + zone_name + ' (ID: ' + zone_id + ')')}"
+                      
+                      # Get record sets
+                      record_sets = route53.list_resource_record_sets(HostedZoneId=zone_id)
+                      record_count = len(record_sets.get('ResourceRecordSets', []))
+                      
+                      results += f"Total Records: {record_count}\n"
+                      
+                      # Check for NS and SOA only
+                      non_ns_soa_records = [r for r in record_sets.get('ResourceRecordSets', []) 
+                                           if r['Type'] not in ['NS', 'SOA']]
+                      
+                      if not non_ns_soa_records:
+                          results += log_warn(f"⚠️  Zone {zone_name} contains only NS and SOA records (may be unused).")
+                      
+                      # Check A and CNAME records
+                      for record in record_sets.get('ResourceRecordSets', []):
+                          if record['Type'] in ['A', 'CNAME']:
+                              name = record['Name']
+                              record_type = record['Type']
+                              
+                              if 'ResourceRecords' in record and record['ResourceRecords']:
+                                  value = record['ResourceRecords'][0]['Value']
+                                  
+                                  # We can't do DNS resolution in Lambda directly
+                                  # So we'll just note these records without resolution check
+                                  results += log_info(f"{record_type} Record: {name} ➜ {value}")
+                  
+                  results += f"\n{log_info('👉 Tip: Clean up unused zones and invalid records to reduce confusion and improve security.')}"
+              
+              except Exception as e:
+                  results += log_error(f"Error checking Route 53 records: {str(e)}")
+                  
+              return results
+
+          def check_eks_clusters():
+              results = log_info("Checking EKS clusters")
+              results += "---------------------------------------------\n"
+              
+              try:
+                  eks = boto3.client('eks')
+                  
+                  # List clusters
+                  clusters = eks.list_clusters()
+                  
+                  if not clusters.get('clusters'):
+                      results += log_warn("No EKS clusters found.")
+                      return results
+                  
+                  for cluster_name in clusters.get('clusters', []):
+                      results += f"\n{log_info('🔍 Cluster: ' + cluster_name)}"
+                      
+                      # Get cluster details
+                      cluster = eks.describe_cluster(name=cluster_name)['cluster']
+                      
+                      status = cluster['status']
+                      version = cluster['version']
+                      endpoint = cluster['endpoint']
+                      created_at = cluster['createdAt'].strftime('%Y-%m-%d %H:%M:%S')
+                      
+                      results += log_success(f"✅ Status: {status}")
+                      results += log_success(f"🔢 Version: {version}")
+                      results += log_success(f"🌐 Endpoint: {endpoint}")
+                      results += log_success(f"📅 Created At: {created_at}")
+                      
+                      # Check nodegroups
+                      nodegroups = eks.list_nodegroups(clusterName=cluster_name).get('nodegroups', [])
+                      
+                      if not nodegroups:
+                          results += log_warn(f"⚠️ No nodegroups found for cluster {cluster_name}.")
+                      else:
+                          results += log_info(f"🧱 Nodegroups:")
+                          for ng in nodegroups:
+                              results += log_success(f" - {ng}")
+                  
+                  results += f"\n{log_info('👉 Tip: Review unused clusters and upgrade older versions to optimize costs and performance.')}"
+              
+              except Exception as e:
+                  results += log_error(f"Error checking EKS clusters: {str(e)}")
+                  
+              return results
+
+          def check_iam_usage():
+              results = log_info("Checking IAM users, roles, and policies")
+              results += "------------------------------------------\n"
+              
+              try:
+                  iam = boto3.client('iam')
+                  
+                  # List users
+                  users = iam.list_users()
+                  
+                  if not users.get('Users'):
+                      results += log_warn("No IAM users found.")
+                  else:
+                      results += log_info("✅ IAM Users:")
+                      for user in users.get('Users', []):
+                          user_name = user['UserName']
+                          results += log_success(f"👤 User: {user_name}")
+                  
+                  # List roles
+                  roles = iam.list_roles()
+                  
+                  if not roles.get('Roles'):
+                      results += log_warn("No IAM roles found.")
+                  else:
+                      results += log_info("✅ IAM Roles:")
+                      for role in roles.get('Roles', []):
+                          role_name = role['RoleName']
+                          results += log_success(f"🛡️ Role: {role_name}")
+                  
+                  # Check policies for users
+                  results += log_info("🔍 Checking IAM policies attached to users")
+                  
+                  for user in users.get('Users', []):
+                      user_name = user['UserName']
+                      
+                      results += f"\n{log_info('User: ' + user_name)}"
+                      
+                      # Inline policies
+                      inline_policies = iam.list_user_policies(UserName=user_name).get('PolicyNames', [])
+                      
+                      if inline_policies:
+                          policy_names = ', '.join(inline_policies)
+                          results += log_warn(f"📎 Inline Policies for {user_name}: {policy_names}")
+                      
+                      # Managed policies
+                      attached_policies = iam.list_attached_user_policies(UserName=user_name).get('AttachedPolicies', [])
+                      
+                      if attached_policies:
+                          policy_names = ', '.join([p['PolicyName'] for p in attached_policies])
+                          results += log_success(f"🔗 Managed Policies for {user_name}: {policy_names}")
+                  
+                  results += f"\n{log_info('👉 Tip: Review IAM permissions regularly. Avoid inline policies when possible.')}"
+              
+              except Exception as e:
+                  results += log_error(f"Error checking IAM usage: {str(e)}")
+                  
+              return results
+
+          def check_security_groups():
+              results = log_info("Scanning Security Groups for overly permissive rules")
+              results += "---------------------------------------------------------\n"
+              
+              try:
+                  ec2 = boto3.client('ec2')
+                  
+                  security_groups = ec2.describe_security_groups()
+                  
+                  for sg in security_groups.get('SecurityGroups', []):
+                      sg_id = sg['GroupId']
+                      sg_name = sg['GroupName']
+                      vpc_id = sg['VpcId']
+                      
+                      results += f"\n{log_info('🔍 Security Group: ' + sg_name + ' (' + sg_id + ') in VPC: ' + vpc_id)}"
+                      
+                      for rule in sg.get('IpPermissions', []):
+                          from_port = rule.get('FromPort', 'All')
+                          to_port = rule.get('ToPort', 'All')
+                          protocol = rule.get('IpProtocol', '-1')
+                          
+                          for ip_range in rule.get('IpRanges', []):
+                              cidr = ip_range['CidrIp']
+                              
+                              if cidr == '0.0.0.0/0':
+                                  if from_port in [22, 3389, 'All']:
+                                      results += log_warn(f"⚠️ Open to the world on port {from_port} ➜ Protocol: {protocol}, CIDR: {cidr}")
+                                  else:
+                                      results += log_info(f"🌐 Open port range {from_port}-{to_port} to the world ➜ Protocol: {protocol}, CIDR: {cidr}")
+                  
+                  results += log_info("✅ Security Group scan complete")
+              
+              except Exception as e:
+                  results += log_error(f"Error checking security groups: {str(e)}")
+                  
+              return results
+  
+  EventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Scheduled rule to trigger AWS Resource Audit Lambda"
+      ScheduleExpression: !Ref ScheduleExpression
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt ResourceAuditFunction.Arn
+          Id: "ResourceAuditTarget"
+
+  LambdaEventBridgePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref ResourceAuditFunction
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt EventBridgeRule.Arn
+
+  ResourceAuditTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: "AWS Resource Audit Notifications"
+      TopicName: !Sub "aws-resource-audit-notifications-${AWS::StackName}"
+
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref ResourceAuditTopic
+      Protocol: "email"
+      Endpoint: !Ref EmailAddress
+
+Outputs:
+  LambdaFunction:
+    Description: "Lambda function that performs the AWS resource audit"
+    Value: !GetAtt ResourceAuditFunction.Arn
+  
+  SNSTopic:
+    Description: "SNS Topic for audit notifications"
+    Value: !Ref ResourceAuditTopic
+  
+  ReportsBucket:
+    Description: "S3 bucket where reports are stored"
+    Value: !Ref S3BucketName
+  
+  ReportsPrefix:
+    Description: "S3 bucket prefix where reports are stored"
+    Value: !Ref ReportsPrefix
