@@ -41,14 +41,34 @@ echo "$network_acls" | jq -c '.NetworkAcls[]' | while read -r acl; do
     inbound_count=$(echo "$acl" | jq '[.Entries[] | select(.Egress == false)] | length')
     outbound_count=$(echo "$acl" | jq '[.Entries[] | select(.Egress == true)] | length')
     
-    # Get subnet associations
-    associations=$(echo "$acl" | jq -r '.Associations[].SubnetId' | paste -sd ";" -)
-    if [ -z "$associations" ]; then
-        associations="None"
+    # Get subnet associations with names
+    subnet_associations=""
+    subnet_ids=$(echo "$acl" | jq -r '.Associations[].SubnetId')
+    
+    if [ -n "$subnet_ids" ]; then
+        for subnet_id in $subnet_ids; do
+            # Get subnet name from tags
+            subnet_info=$(aws ec2 describe-subnets --subnet-ids "$subnet_id" --output json)
+            subnet_name=$(echo "$subnet_info" | jq -r '.Subnets[0].Tags[] | select(.Key=="Name") | .Value' 2>/dev/null)
+            
+            # If no name tag, use "Unnamed"
+            if [ -z "$subnet_name" ] || [ "$subnet_name" == "null" ]; then
+                subnet_name="Unnamed"
+            fi
+            
+            # Append to the list
+            if [ -n "$subnet_associations" ]; then
+                subnet_associations="$subnet_associations;$subnet_id ($subnet_name)"
+            else
+                subnet_associations="$subnet_id ($subnet_name)"
+            fi
+        done
+    else
+        subnet_associations="None"
     fi
     
     # Write to CSV
-    echo "$network_acl_id,$associations,$is_default,$vpc_id,$inbound_count,$outbound_count,$owner_id" >> "$output_file"
+    echo "$network_acl_id,$subnet_associations,$is_default,$vpc_id,$inbound_count,$outbound_count,$owner_id" >> "$output_file"
     
     echo "Processed Network ACL: $network_acl_id"
 done
