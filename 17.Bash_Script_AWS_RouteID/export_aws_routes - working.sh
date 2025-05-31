@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to export AWS Route Tables information to a CSV file
-# This script exports name, Destination, Target, status, and propagated status
+# This script exports RouteID, name, Destination, Target, status, and propagated status
 
 # Exit on error
 set -e
@@ -25,7 +25,7 @@ if ! command -v aws &> /dev/null; then
 fi
 
 # Create header for CSV file
-echo "RouteTableID,RouteName,Destination,Target,Status,Propagated" > "$output_file"
+echo "RouteTableID,RouteName,RouteID,Destination,Target,Status,Propagated" > "$output_file"
 
 # Get all route tables using AWS CLI
 echo "Fetching route table information from AWS (region: $AWS_DEFAULT_REGION)..."
@@ -33,6 +33,9 @@ if ! route_tables=$(aws ec2 describe-route-tables --output json); then
     echo "Error: Failed to retrieve route tables from AWS. Check your AWS credentials and permissions."
     exit 1
 fi
+
+# Counter for generating unique route IDs
+route_counter=1
 
 # Process each route table
 echo "$route_tables" | jq -c '.RouteTables[]' | while read -r route_table; do
@@ -80,14 +83,11 @@ echo "$route_tables" | jq -c '.RouteTables[]' | while read -r route_table; do
             fi
         fi
         
+        # Create a unique route ID
+        route_id="route-${route_counter}"
+        route_counter=$((route_counter + 1))
+        
         # Write to CSV file
-        echo "\"$route_table_id\",\"$route_table_name\",\"$destination\",\"$target\",\"$state\",\"$propagated\"" >> "$output_file"
-    done
-done
-
-route_count=$(( $(wc -l < "$output_file") - 1 ))
-echo "Route information has been exported to $output_file"
-echo "Total routes exported: $route_count"
         echo "\"$route_table_id\",\"$route_table_name\",\"$route_id\",\"$destination\",\"$target\",\"$state\",\"$propagated\"" >> "$output_file"
     done
 done
