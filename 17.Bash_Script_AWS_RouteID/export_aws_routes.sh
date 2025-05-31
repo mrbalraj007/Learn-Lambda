@@ -25,7 +25,7 @@ if ! command -v aws &> /dev/null; then
 fi
 
 # Create header for CSV file
-echo "RouteTableID,RouteName,Destination,Target,Status,Propagated" > "$output_file"
+echo "RouteTable,Destination,Target,Status,Propagated" > "$output_file"
 
 # Get all route tables using AWS CLI
 echo "Fetching route table information from AWS (region: $AWS_DEFAULT_REGION)..."
@@ -40,6 +40,13 @@ echo "$route_tables" | jq -c '.RouteTables[]' | while read -r route_table; do
     
     # Get route table name from tags
     route_table_name=$(echo "$route_table" | jq -r '.Tags[] | select(.Key=="Name") | .Value' 2>/dev/null || echo "NoName")
+    
+    # Combine RouteTableID and RouteName if they are different
+    if [ "$route_table_id" = "$route_table_name" ] || [ "$route_table_name" = "NoName" ]; then
+        route_table_combined="$route_table_id"
+    else
+        route_table_combined="$route_table_id ($route_table_name)"
+    fi
     
     # Process each route in the route table
     echo "$route_table" | jq -c '.Routes[]' | while read -r route; do
@@ -81,7 +88,7 @@ echo "$route_tables" | jq -c '.RouteTables[]' | while read -r route_table; do
         fi
         
         # Write to CSV file
-        echo "\"$route_table_id\",\"$route_table_name\",\"$destination\",\"$target\",\"$state\",\"$propagated\"" >> "$output_file"
+        echo "\"$route_table_combined\",\"$destination\",\"$target\",\"$state\",\"$propagated\"" >> "$output_file"
     done
 done
 
