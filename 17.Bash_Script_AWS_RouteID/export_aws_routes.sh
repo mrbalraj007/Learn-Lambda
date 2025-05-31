@@ -85,12 +85,9 @@ echo "$route_tables" | jq -c '.RouteTables[]' | while read -r route_table; do
     done
 done
 
-route_count=$(( $(wc -l < "$output_file") - 1 ))
-echo "Route information has been exported to $output_file"
-echo "Total routes exported: $route_count"
-        echo "\"$route_table_id\",\"$route_table_name\",\"$route_id\",\"$destination\",\"$target\",\"$state\",\"$propagated\"" >> "$output_file"
-    done
-done
+# Count routes (subtract header line)
+route_count=$(wc -l < "$output_file")
+route_count=$((route_count - 1))
 
 echo "Route information has been exported to $output_file"
-echo "Total routes exported: $((route_counter - 1))"
+echo "Total routes exported: $route_count"
