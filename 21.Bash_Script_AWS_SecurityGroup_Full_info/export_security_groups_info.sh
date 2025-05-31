@@ -6,8 +6,11 @@
 # Set the AWS region
 AWS_REGION="us-east-1"
 
-# Create CSV file with header
-OUTPUT_FILE="security_groups_info.csv"
+# Create a timestamp for the filename
+DATETIME=$(date +"%Y-%m-%d_%H%M%S")
+
+# Create CSV file with header and timestamp in filename
+OUTPUT_FILE="security_groups_info_${DATETIME}.csv"
 echo "SecurityGroupName,SecurityGroupID,SecurityGroupRuleID,IPVersion,Type,Protocol,PortRange,Destination,Description" > $OUTPUT_FILE
 
 # Check if jq is installed
@@ -34,7 +37,7 @@ echo "Output file: $OUTPUT_FILE"
 
 # Get all security groups
 echo "Retrieving security groups..."
-SECURITY_GROUPS=$(aws ec2 describe-security-groups --region $AWS_REGION)
+SECURITY_GROUPS=$(aws ec2 describe-security-groups --region $AWS_REGION --output json)
 
 if [ -z "$SECURITY_GROUPS" ]; then
     echo "No security groups found in region $AWS_REGION"
@@ -52,9 +55,9 @@ echo "$SECURITY_GROUPS" | jq -c '.SecurityGroups[]' | while read -r sg; do
     RULES=$(aws ec2 describe-security-group-rules --region $AWS_REGION --filters Name=group-id,Values=$SG_ID --output json)
     
     # Process ingress rules first
-    echo "$RULES" | jq -r '.SecurityGroupRules[] | select(.IsEgress==false) | [
-        env.SG_NAME,
-        env.SG_ID,
+    echo "$RULES" | jq -r --arg SG_NAME "$SG_NAME" --arg SG_ID "$SG_ID" '.SecurityGroupRules[] | select(.IsEgress==false) | [
+        $SG_NAME,
+        $SG_ID,
         .SecurityGroupRuleId,
         if .IpProtocol == "-1" then "All" else 
             if has("CidrIpv4") then "IPv4" 
@@ -74,12 +77,12 @@ echo "$SECURITY_GROUPS" | jq -c '.SecurityGroups[]' | while read -r sg; do
         else "N/A" 
         end,
         if has("Description") and .Description != null then .Description else "N/A" end
-    ] | @csv' --arg SG_ID "$SG_ID" --arg SG_NAME "$SG_NAME" >> $OUTPUT_FILE
+    ] | @csv' >> $OUTPUT_FILE
     
     # Then process egress rules
-    echo "$RULES" | jq -r '.SecurityGroupRules[] | select(.IsEgress==true) | [
-        env.SG_NAME,
-        env.SG_ID,
+    echo "$RULES" | jq -r --arg SG_NAME "$SG_NAME" --arg SG_ID "$SG_ID" '.SecurityGroupRules[] | select(.IsEgress==true) | [
+        $SG_NAME,
+        $SG_ID,
         .SecurityGroupRuleId,
         if .IpProtocol == "-1" then "All" else 
             if has("CidrIpv4") then "IPv4" 
@@ -99,7 +102,7 @@ echo "$SECURITY_GROUPS" | jq -c '.SecurityGroups[]' | while read -r sg; do
         else "N/A" 
         end,
         if has("Description") and .Description != null then .Description else "N/A" end
-    ] | @csv' --arg SG_ID "$SG_ID" --arg SG_NAME "$SG_NAME" >> $OUTPUT_FILE
+    ] | @csv' >> $OUTPUT_FILE
     
     if [ $? -ne 0 ]; then
         echo "Warning: Error processing security group $SG_ID"
