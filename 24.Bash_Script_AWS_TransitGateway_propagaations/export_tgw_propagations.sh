@@ -74,7 +74,8 @@ for ROUTE_TABLE in $ROUTE_TABLES; do
     echo "Processing Route Table: $ROUTE_TABLE ($CURRENT_TABLE of $TOTAL_TABLES)"
     
     # Get propagations for this route table
-    PROPAGATIONS=$(aws ec2 describe-transit-gateway-route-table-propagations \
+    # IMPORTANT: Changed from describe-transit-gateway-route-table-propagations to get-transit-gateway-route-table-propagations
+    PROPAGATIONS=$(aws ec2 get-transit-gateway-route-table-propagations \
         --transit-gateway-route-table-id "$ROUTE_TABLE" \
         --output json)
     
@@ -90,7 +91,7 @@ for ROUTE_TABLE in $ROUTE_TABLES; do
     fi
     
     # Extract and write details to CSV using jq
-    # Use empty string instead of N/A for missing values, and properly quote all fields
+    # Updated to match the structure returned by get-transit-gateway-route-table-propagations
     PROP_DATA=$(echo "$PROPAGATIONS" | jq -r --arg rt "$ROUTE_TABLE" '.TransitGatewayRouteTablePropagations[] | 
         [$rt, 
          (.TransitGatewayAttachmentId // ""),
@@ -104,6 +105,7 @@ for ROUTE_TABLE in $ROUTE_TABLES; do
         echo "  → No valid propagation data found or jq error occurred"
         if $VERBOSE; then
             log_verbose "jq error or no data when processing: $ROUTE_TABLE"
+            log_verbose "Raw output: $(echo "$PROPAGATIONS" | jq '.')"
         fi
         continue
     fi
@@ -129,4 +131,5 @@ if [ $TOTAL_PROPAGATIONS -gt 0 ]; then
     head -n 3 "$OUTPUT_FILE"
 else
     echo "Warning: No propagation data was exported. The output file contains only the header."
+    echo "Try running with --verbose flag to see more details."
 fi
