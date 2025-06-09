@@ -73,9 +73,10 @@ fi
 for TGW_ROUTE_TABLE in $TGW_ROUTE_TABLES; do
     echo "Processing routes for Transit Gateway Route Table: $TGW_ROUTE_TABLE"
     
-    # Get routes for the current route table
-    ROUTES_JSON=$(aws ec2 get-transit-gateway-route-table-routes \
+    # Use search-transit-gateway-routes instead of get-transit-gateway-route-table-routes
+    ROUTES_JSON=$(aws ec2 search-transit-gateway-routes \
         --transit-gateway-route-table-id "$TGW_ROUTE_TABLE" \
+        --filters "Name=type,Values=static,propagated" \
         --region "$AWS_REGION" \
         --output json)
     
