@@ -1,25 +1,25 @@
 #!/bin/bash
 
 # Script: ec2_tags_export.sh
-# Description: Extract specified tags from EC2 instances and export to CSV
-# Usage: ./ec2_tags_export.sh [--region REGION] TAG1 [TAG2...]
+# Description: Auto-discover and extract all EC2 instance tags and export to CSV
+# Usage: ./ec2_tags_export.sh [--region REGION]
 
 # Default settings
 REGION="us-east-1"
 
 # Help function
 show_help() {
-    echo "Usage: $0 [OPTIONS] TAG1 [TAG2 TAG3...]"
+    echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Extract specified tags from EC2 instances and export to CSV."
+    echo "Auto-discovers and extracts all tags from EC2 instances and exports to CSV."
     echo ""
     echo "Options:"
     echo "  --region REGION     AWS region (default: us-east-1)"
     echo "  --help              Show this help message and exit"
     echo ""
     echo "Examples:"
-    echo "  $0 Name Owner Environment"
-    echo "  $0 --region eu-west-1 Name Department Project"
+    echo "  $0"
+    echo "  $0 --region eu-west-1"
     exit 0
 }
 
@@ -51,37 +51,45 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
-            break
+            echo "Unknown argument: $1"
+            echo "Run '$0 --help' for usage information"
+            exit 1
             ;;
     esac
 done
-
-# Check if at least one tag key is provided
-if [ $# -eq 0 ]; then
-    echo "Error: Please provide at least one tag key to extract."
-    echo "Run '$0 --help' for usage information"
-    exit 1
-fi
 
 # Create timestamp for file naming
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 OUTPUT_FILE="ec2_tags_${TIMESTAMP}.csv"
 
+echo "Fetching EC2 instances in region ${REGION}..."
+INSTANCES_JSON=$(aws ec2 describe-instances --region "$REGION" --output json)
+
+# Extract all unique tag keys across all instances
+echo "Discovering all unique tags across instances..."
+ALL_TAGS=$(echo "$INSTANCES_JSON" | jq -r '.Reservations[].Instances[].Tags[]?.Key' | sort -u)
+
+# Check if we found any tags
+if [ -z "$ALL_TAGS" ]; then
+    echo "No tags found on any instances in region ${REGION}."
+    exit 0
+fi
+
 # Create header row for CSV
 HEADER="InstanceId,InstanceName"
 
-# Add tag keys to header
-for tag in "$@"; do
-    HEADER="${HEADER},${tag}"
+# Add all tag keys to header
+for tag in $ALL_TAGS; do
+    # Skip Name tag as we already include it as InstanceName
+    if [ "$tag" != "Name" ]; then
+        HEADER="${HEADER},${tag}"
+    fi
 done
 
 echo "$HEADER" > "$OUTPUT_FILE"
 
-# Get instances data
-echo "Fetching EC2 instances in region ${REGION}..."
-INSTANCES_JSON=$(aws ec2 describe-instances --region "$REGION" --output json)
-
 # Process each instance
+echo "Exporting tags for all instances..."
 echo "$INSTANCES_JSON" | jq -c '.Reservations[].Instances[]' | while read -r instance; do
     instance_id=$(echo "$instance" | jq -r '.InstanceId')
     
@@ -94,27 +102,19 @@ echo "$INSTANCES_JSON" | jq -c '.Reservations[].Instances[]' | while read -r ins
     # Start building the CSV line
     LINE="${instance_id},\"${instance_name//\"/\"\"}\""
     
-    # Process each requested tag
-    for tag in "$@"; do
-        # Find the tag value
-        tag_value=$(echo "$tags_json" | jq -r ".[] | select(.Key==\"$tag\") | .Value" 2>/dev/null || echo "N/A")
-        
-        # Quote and escape the value for CSV
-        LINE="${LINE},\"${tag_value//\"/\"\"}\""
+    # Process each discovered tag (except Name which we already handled)
+    for tag in $ALL_TAGS; do
+        if [ "$tag" != "Name" ]; then
+            # Find the tag value
+            tag_value=$(echo "$tags_json" | jq -r ".[] | select(.Key==\"$tag\") | .Value" 2>/dev/null || echo "N/A")
+            
+            # Quote and escape the value for CSV
+            LINE="${LINE},\"${tag_value//\"/\"\"}\""
+        fi
     done
     
     echo "$LINE" >> "$OUTPUT_FILE"
 done
 
-echo "Export completed. Results saved to $OUTPUT_FILE"
-
-
-# How to Use the Script
-# Make the script executable:
-# chmod +x ec2_tags_export.sh
-#Run the script with the tags you want to extract:
-#./ec2_tags_export.sh Name Environment Project
-# To use a different region:
-#./ec2_tags_export.sh --region us-west-2 Name Department CostCenter
-#The script will create a CSV file named with a timestamp (e.g., ec2_tags_20230824_123456.csv) containing all your EC2 instances and the requested tags. Each instance will have its ID, Name tag (if available), and all the requested tag values.
-
+echo "Export completed. Found $(echo "$ALL_TAGS" | wc -w) unique tags across all instances."
+echo "Results saved to $OUTPUT_FILE"
