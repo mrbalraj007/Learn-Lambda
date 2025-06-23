@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script: ec2_tags_export.sh
-# Description: Auto-discover and extract all EC2 instance details and tags and export to CSV
+# Description: Auto-discover and extract all EC2 instance tags and export to CSV
 # Usage: ./ec2_tags_export.sh [--region REGION]
 
 # Default settings
@@ -11,7 +11,7 @@ REGION="us-east-1"
 show_help() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
-    echo "Auto-discovers and extracts all instance details and tags from EC2 instances and exports to CSV."
+    echo "Auto-discovers and extracts all tags from EC2 instances and exports to CSV."
     echo ""
     echo "Options:"
     echo "  --region REGION     AWS region (default: us-east-1)"
@@ -60,25 +60,23 @@ done
 
 # Create timestamp for file naming
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-OUTPUT_FILE="ec2_details_tags_${TIMESTAMP}.csv"
+OUTPUT_FILE="ec2_tags_${TIMESTAMP}.csv"
 
 echo "Fetching EC2 instances in region ${REGION}..."
 INSTANCES_JSON=$(aws ec2 describe-instances --region "$REGION" --output json)
-
-# Get alarm status for each instance
-echo "Fetching CloudWatch alarms for EC2 instances..."
-ALARMS_JSON=$(aws cloudwatch describe-alarms --region "$REGION" --output json)
-
-# Get elastic IPs data
-echo "Fetching Elastic IPs..."
-EIP_JSON=$(aws ec2 describe-addresses --region "$REGION" --output json)
 
 # Extract all unique tag keys across all instances
 echo "Discovering all unique tags across instances..."
 ALL_TAGS=$(echo "$INSTANCES_JSON" | jq -r '.Reservations[].Instances[].Tags[]?.Key' | sort -u)
 
-# Create header row for CSV with instance details and tags
-HEADER="InstanceId,InstanceName,PublicIP,PrivateIP,InstanceType,AvailabilityZone,AlarmStatus,ElasticIP,SecurityGroupName,KeyName,LaunchTime,PlatformDetails"
+# Check if we found any tags
+if [ -z "$ALL_TAGS" ]; then
+    echo "No tags found on any instances in region ${REGION}."
+    exit 0
+fi
+
+# Create header row for CSV
+HEADER="InstanceId,InstanceName"
 
 # Add all tag keys to header
 for tag in $ALL_TAGS; do
@@ -91,19 +89,9 @@ done
 echo "$HEADER" > "$OUTPUT_FILE"
 
 # Process each instance
-echo "Exporting instance details and tags for all instances..."
+echo "Exporting tags for all instances..."
 echo "$INSTANCES_JSON" | jq -c '.Reservations[].Instances[]' | while read -r instance; do
     instance_id=$(echo "$instance" | jq -r '.InstanceId')
-    
-    # Get instance details
-    public_ip=$(echo "$instance" | jq -r '.PublicIpAddress // "N/A"')
-    private_ip=$(echo "$instance" | jq -r '.PrivateIpAddress // "N/A"')
-    instance_type=$(echo "$instance" | jq -r '.InstanceType // "N/A"')
-    availability_zone=$(echo "$instance" | jq -r '.Placement.AvailabilityZone // "N/A"')
-    security_group_names=$(echo "$instance" | jq -r '.SecurityGroups[].GroupName // "N/A"' | paste -sd ";" -)
-    key_name=$(echo "$instance" | jq -r '.KeyName // "N/A"')
-    launch_time=$(echo "$instance" | jq -r '.LaunchTime // "N/A"')
-    platform_details=$(echo "$instance" | jq -r '.PlatformDetails // "N/A"')
     
     # Get all tags as a JSON object for easier lookup
     tags_json=$(echo "$instance" | jq -c '.Tags // []')
@@ -111,23 +99,8 @@ echo "$INSTANCES_JSON" | jq -c '.Reservations[].Instances[]' | while read -r ins
     # Try to get Name tag
     instance_name=$(echo "$tags_json" | jq -r '.[] | select(.Key=="Name") | .Value' 2>/dev/null || echo "N/A")
     
-    # Check for Elastic IP associated with this instance
-    elastic_ip=$(echo "$EIP_JSON" | jq -r --arg instance_id "$instance_id" '.Addresses[] | select(.InstanceId==$instance_id) | .PublicIp' 2>/dev/null || echo "N/A")
-    
-    # Check for alarms related to this instance
-    alarm_status="N/A"
-    alarm_names=$(echo "$ALARMS_JSON" | jq -r --arg instance_id "$instance_id" '.MetricAlarms[] | select(.Dimensions[] | .Name=="InstanceId" and .Value==$instance_id) | .StateValue' 2>/dev/null)
-    if [ ! -z "$alarm_names" ]; then
-        # If there are alarms in ALARM state, mark as "ALARM", otherwise "OK"
-        if echo "$alarm_names" | grep -q "ALARM"; then
-            alarm_status="ALARM"
-        else
-            alarm_status="OK"
-        fi
-    fi
-    
-    # Start building the CSV line with instance details
-    LINE="${instance_id},\"${instance_name//\"/\"\"}\",\"${public_ip}\",\"${private_ip}\",\"${instance_type}\",\"${availability_zone}\",\"${alarm_status}\",\"${elastic_ip}\",\"${security_group_names//\"/\"\"}\",\"${key_name//\"/\"\"}\",\"${launch_time}\",\"${platform_details//\"/\"\"}\""
+    # Start building the CSV line
+    LINE="${instance_id},\"${instance_name//\"/\"\"}\""
     
     # Process each discovered tag (except Name which we already handled)
     for tag in $ALL_TAGS; do
