@@ -1,0 +1,104 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Lambda function to list inactive IAM access keys for all users, triggered weekly with SNS notification support.
+
+Parameters:
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket name containing the Lambda deployment package
+
+  LambdaS3Key:
+    Type: String
+    Description: Path to the ZIP file in the S3 bucket (e.g., inactive_access_keys_lambda.zip)
+
+  ScheduleExpression:
+    Type: String
+    Default: rate(7 days)
+    Description: CloudWatch schedule expression (e.g., rate(7 days), cron(0 10 ? * MON *))
+
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive SNS alerts
+
+Resources:
+
+  InactiveAccessKeysLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: InactiveAccessKeysLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ListIAMUsersAccessKeys
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:ListUsers
+                  - iam:ListAccessKeys
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  InactiveAccessKeysLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ListInactiveIAMAccessKeys
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.12
+      Timeout: 60
+      Role: !GetAtt InactiveAccessKeysLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+
+  WeeklyScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: InactiveAccessKeysScheduleRule
+      Description: Trigger Lambda on schedule to check for inactive IAM keys
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt InactiveAccessKeysLambdaFunction.Arn
+          Id: TargetFunctionV1
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InactiveAccessKeysLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WeeklyScheduleRule.Arn
+
+  InactiveKeysSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: InactiveIAMKeysAlertTopic
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
+Outputs:
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref InactiveAccessKeysLambdaFunction
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt InactiveAccessKeysLambdaFunction.Arn
+
+  SNSTopicArn:
+    Description: ARN of the SNS topic for notifications
+    Value: !Ref InactiveKeysSNSTopic

@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy a Lambda function that deletes inactive IAM access keys'
+
+Resources:
+  InactiveKeysReportBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'inactive-keys-reports-${AWS::AccountId}'
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldReports
+            Status: Enabled
+            ExpirationInDays: 30
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: IAMAccessKeyManagement
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'iam:ListUsers'
+                  - 'iam:ListAccessKeys'
+                  - 'iam:DeleteAccessKey'
+                  - 'iam:GetAccessKeyLastUsed'
+                Resource: '*'
+        - PolicyName: S3ReportUpload
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub 'arn:aws:s3:::${InactiveKeysReportBucket}/*'
+
+  DeleteInactiveKeysFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: delete-inactive-access-keys
+      Runtime: python3.9
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 256
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          REPORT_BUCKET: !Ref InactiveKeysReportBucket
+      Code:
+        ZipFile: |
+          import boto3
+          import datetime
+          import os
+          import json
+
+          def handler(event, context):
+              # Implementation in separate file
+              pass
+
+  ScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Schedule to run inactive access keys cleanup"
+      ScheduleExpression: "rate(7 days)"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt DeleteInactiveKeysFunction.Arn
+          Id: "DeleteInactiveKeysFunction"
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DeleteInactiveKeysFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt ScheduledRule.Arn
+
+Outputs:
+  LambdaFunction:
+    Description: "Lambda function to delete inactive access keys"
+    Value: !GetAtt DeleteInactiveKeysFunction.Arn
+
+  ReportBucket:
+    Description: "S3 bucket where reports are stored"
+    Value: !Ref InactiveKeysReportBucket

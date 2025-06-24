@@ -1,0 +1,270 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy a Lambda function that deletes inactive IAM access keys'
+
+Parameters:
+  ReportBucketName:
+    Type: String
+    Description: 'Existing S3 bucket name to store the deleted access key reports'
+  
+  NotificationEmail:
+    Type: String
+    Description: 'Email address to receive notifications about deleted access keys'
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+Resources:
+  # SNS Topic for Notifications
+  DeletedKeysNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: 'Inactive Access Keys Deleted'
+      TopicName: 'deleted-access-keys-notification'
+  
+  # SNS Subscription for Email Notifications
+  DeletedKeysEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref DeletedKeysNotificationTopic
+      Protocol: 'email'
+      Endpoint: !Ref NotificationEmail
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: IAMAccessKeyManagement
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'iam:ListUsers'
+                  - 'iam:ListAccessKeys'
+                  - 'iam:DeleteAccessKey'
+                  - 'iam:GetAccessKeyLastUsed'
+                Resource: '*'
+        - PolicyName: S3ReportUpload
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: !Sub 'arn:aws:s3:::${ReportBucketName}/*'
+        # Add SNS publish permissions
+        - PolicyName: SNSPublishPermission
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                Resource: !Ref DeletedKeysNotificationTopic
+
+  DeleteInactiveKeysFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: delete-inactive-access-keys
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 256
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          REPORT_BUCKET: !Ref ReportBucketName
+          SNS_TOPIC_ARN: !Ref DeletedKeysNotificationTopic
+      Code:
+        ZipFile: |
+          import boto3
+          import datetime
+          import os
+          import csv
+          import io
+          from datetime import timezone
+
+          def handler(event, context):
+              # Initialize AWS clients
+              iam_client = boto3.client('iam')
+              s3_client = boto3.client('s3')
+              sns_client = boto3.client('sns')
+              
+              # Get SNS Topic ARN from environment variable
+              sns_topic_arn = os.environ['SNS_TOPIC_ARN']
+              
+              # Get region from Lambda context
+              region = context.invoked_function_arn.split(':')[3]
+              
+              # Get S3 bucket name from environment variable
+              bucket_name = os.environ['REPORT_BUCKET']
+              
+              # Current timestamp for report filenames and calculations - make it timezone-aware
+              current_time = datetime.datetime.now(timezone.utc)
+              timestamp = current_time.strftime('%Y-%m-%d-%H-%M-%S')
+              
+              # Calculate the date 14 days ago for inactivity threshold - as timezone-aware
+              inactive_threshold = current_time - datetime.timedelta(days=14)
+              
+              # Initialize lists to track inactive and deleted keys
+              inactive_keys = []
+              deleted_keys = []
+              
+              # Get all IAM users
+              paginator = iam_client.get_paginator('list_users')
+              for page in paginator.paginate():
+                  for user in page['Users']:
+                      username = user['UserName']
+                      
+                      # List access keys for the user
+                      keys_response = iam_client.list_access_keys(UserName=username)
+                      
+                      for key in keys_response['AccessKeyMetadata']:
+                          access_key_id = key['AccessKeyId']
+                          status = key['Status']
+                          
+                          # Make create_date timezone-aware by attaching UTC timezone
+                          create_date = key['CreateDate'].replace(tzinfo=timezone.utc)
+                          create_date_str = create_date.strftime('%Y-%m-%d')
+                          
+                          # Get last used information
+                          last_used_response = iam_client.get_access_key_last_used(AccessKeyId=access_key_id)
+                          last_used = last_used_response.get('AccessKeyLastUsed', {})
+                          last_used_date = last_used.get('LastUsedDate', None)
+                          
+                          key_needs_deletion = False
+                          
+                          # Check if key is inactive already
+                          if status == 'Inactive':
+                              key_needs_deletion = True
+                              last_used_date_str = 'Never'
+                              if last_used_date:
+                                  last_used_date_str = last_used_date.strftime('%Y-%m-%d')
+                          # Check if key is active but hasn't been used for 14+ days
+                          elif status == 'Active':
+                              # If the key has never been used and was created more than 14 days ago
+                              if not last_used_date and create_date < inactive_threshold:
+                                  key_needs_deletion = True
+                                  last_used_date_str = 'Never'
+                              # If the key was last used more than 14 days ago
+                              elif last_used_date and last_used_date < inactive_threshold:
+                                  key_needs_deletion = True
+                                  last_used_date_str = last_used_date.strftime('%Y-%m-%d')
+                              else:
+                                  # Key is active and recently used, skip it
+                                  continue
+                          
+                          if key_needs_deletion:
+                              # Record the inactive key
+                              key_info = {
+                                  'UserName': username,
+                                  'AccessKeyId': access_key_id,
+                                  'Status': status,
+                                  'CreateDate': create_date_str,
+                                  'LastUsed': last_used_date_str
+                              }
+                              inactive_keys.append(key_info)
+                              
+                              # Delete the inactive key
+                              try:
+                                  iam_client.delete_access_key(
+                                      UserName=username,
+                                      AccessKeyId=access_key_id
+                                  )
+                                  
+                                  # Record the deletion with region information
+                                  deleted_key = key_info.copy()
+                                  deleted_key['Region'] = region
+                                  deleted_key['DeletionTime'] = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                                  deleted_keys.append(deleted_key)
+                                  
+                                  print(f"Deleted inactive key {access_key_id} for user {username}")
+                                  
+                              except Exception as e:
+                                  print(f"Error deleting key {access_key_id} for user {username}: {str(e)}")
+              
+              # Create the deleted keys report as CSV - only creating this file now
+              if deleted_keys:
+                  # Create a CSV in memory
+                  csv_buffer = io.StringIO()
+                  fieldnames = ['UserName', 'AccessKeyId', 'Status', 'CreateDate', 'LastUsed', 'Region', 'DeletionTime']
+                  writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
+                  
+                  writer.writeheader()
+                  for key in deleted_keys:
+                      writer.writerow(key)
+                  
+                  # Store in inactive_keys folder
+                  deleted_keys_filename = f"inactive_keys/deleted_keys_{timestamp}.csv"
+                  s3_client.put_object(
+                      Bucket=bucket_name,
+                      Key=deleted_keys_filename,
+                      Body=csv_buffer.getvalue(),
+                      ContentType='text/csv'
+                  )
+                  
+                  print(f"Deleted keys report uploaded to s3://{bucket_name}/{deleted_keys_filename}")
+                  
+                  # Send SNS notification with deleted keys information
+                  message = "The following inactive AWS access keys have been deleted:\n\n"
+                  message += "UserName,AccessKeyID,Region,DeletionTime\n"
+                  
+                  for key in deleted_keys:
+                      message += f"{key['UserName']},{key['AccessKeyId']},{key['Region']},{key['DeletionTime']}\n"
+                  
+                  # Send the notification
+                  sns_client.publish(
+                      TopicArn=sns_topic_arn,
+                      Subject="AWS Inactive Access Keys Deleted",
+                      Message=message
+                  )
+                  print(f"Notification sent to SNS topic: {sns_topic_arn}")
+              else:
+                  print("No keys were deleted")
+              
+              return {
+                  'statusCode': 200,
+                  'body': {
+                      'message': f"Processed {len(inactive_keys)} inactive keys, deleted {len(deleted_keys)} keys",
+                      'inactiveKeysCount': len(inactive_keys),
+                      'deletedKeysCount': len(deleted_keys)
+                  }
+              }
+
+  ScheduledRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Schedule to run inactive access keys cleanup every 14 days"
+      ScheduleExpression: "rate(14 days)"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt DeleteInactiveKeysFunction.Arn
+          Id: "DeleteInactiveKeysFunction"
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DeleteInactiveKeysFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt ScheduledRule.Arn
+
+Outputs:
+  LambdaFunction:
+    Description: "Lambda function to delete inactive access keys"
+    Value: !GetAtt DeleteInactiveKeysFunction.Arn
+
+  ReportBucket:
+    Description: "S3 bucket where reports are stored"
+    Value: !Ref ReportBucketName
+    
+  NotificationTopic:
+    Description: "SNS Topic for deleted keys notifications"
+    Value: !Ref DeletedKeysNotificationTopic

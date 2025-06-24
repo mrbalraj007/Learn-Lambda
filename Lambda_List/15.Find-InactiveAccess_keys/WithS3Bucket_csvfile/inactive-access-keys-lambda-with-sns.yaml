@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Lambda function to list inactive IAM access keys for all users, triggered weekly with SNS notification support.
+
+Parameters:
+  ScheduleExpression:
+    Type: String
+    Default: rate(7 days)
+    Description: CloudWatch schedule expression (e.g., rate(7 days), cron(0 10 ? * MON *))
+
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive SNS alerts
+    
+  ReportBucketName:
+    Type: String
+    Description: S3 bucket name where CSV reports will be stored
+
+Resources:
+  InactiveAccessKeysLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: InactiveAccessKeysLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ListIAMUsersAccessKeys
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:ListUsers
+                  - iam:ListAccessKeys
+                  - iam:GetAccessKeyLastUsed
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub "arn:aws:s3:::${ReportBucketName}/*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref InactiveKeysSNSTopic
+
+  InactiveAccessKeysLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ListInactiveIAMAccessKeys
+      Handler: index.lambda_handler
+      Runtime: python3.12
+      Timeout: 60
+      Role: !GetAtt InactiveAccessKeysLambdaRole.Arn
+      Environment:
+        Variables:
+          REPORT_BUCKET_NAME: !Ref ReportBucketName
+          SNS_TOPIC_ARN: !Ref InactiveKeysSNSTopic
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import csv
+          import io
+          import os
+          from datetime import datetime, timezone
+          
+          def lambda_handler(event, context):
+              region = event.get('region', 'us-east-1')  # Default to us-east-1 if not provided
+              print(f"Checking inactive access keys in region: {region}")
+              
+              # Get the S3 bucket name from environment variable
+              report_bucket = os.environ.get('REPORT_BUCKET_NAME')
+              if not report_bucket:
+                  raise Exception("REPORT_BUCKET_NAME environment variable is not set")
+              
+              # Initialize AWS clients
+              iam_client = boto3.client('iam', region_name=region)
+              s3_client = boto3.client('s3', region_name=region)
+              sns_client = boto3.client('sns', region_name=region)
+              
+              # Get the SNS topic ARN from environment variable
+              sns_topic_arn = os.environ.get('SNS_TOPIC_ARN')
+              
+              current_time = datetime.now(timezone.utc)
+              inactive_keys_report = []
+          
+              try:
+                  # List all users
+                  users_response = iam_client.list_users()
+                  users = users_response['Users']
+          
+                  for user in users:
+                      username = user['UserName']
+                      # List access keys for each user
+                      keys_response = iam_client.list_access_keys(UserName=username)
+                      
+                      for key in keys_response['AccessKeyMetadata']:
+                          access_key_id = key['AccessKeyId']
+                          create_date = key['CreateDate']
+                          status = key['Status']
+                          
+                          # Get last used information for this key
+                          last_used_response = iam_client.get_access_key_last_used(AccessKeyId=access_key_id)
+                          
+                          # Extract last used date if available
+                          last_used_date = last_used_response.get('AccessKeyLastUsed', {}).get('LastUsedDate')
+                          last_used_service = last_used_response.get('AccessKeyLastUsed', {}).get('ServiceName', 'N/A')
+                          
+                          # Calculate days since last use or days since creation if never used
+                          if last_used_date:
+                              days_since_last_use = (current_time - last_used_date).days
+                              last_used_date_str = last_used_date.strftime('%Y-%m-%dT%H:%M:%S')
+                          else:
+                              days_since_last_use = (current_time - create_date).days
+                              last_used_date_str = "Never used"
+                          
+                          if status == 'Inactive':
+                              inactive_keys_report.append({
+                                  'UserName': username,
+                                  'AccessKeyId': access_key_id,
+                                  'Status': status,
+                                  'CreateDate': create_date.strftime('%Y-%m-%dT%H:%M:%S'),
+                                  'LastUsedDate': last_used_date_str,
+                                  'LastUsedService': last_used_service,
+                                  'DaysSinceLastUse': days_since_last_use,
+                                  'RegionChecked': region
+                              })
+          
+                  # Generate CSV file in memory
+                  csv_buffer = io.StringIO()
+                  if inactive_keys_report:
+                      csv_writer = csv.DictWriter(
+                          csv_buffer,
+                          fieldnames=['UserName', 'AccessKeyId', 'Status', 'CreateDate', 'LastUsedDate', 
+                                     'LastUsedService', 'DaysSinceLastUse', 'RegionChecked']
+                      )
+                      csv_writer.writeheader()
+                      csv_writer.writerows(inactive_keys_report)
+                      
+                      # Generate filename with timestamp
+                      timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+                      filename = f"inactive-access-keys-report-{timestamp}.csv"
+                      
+                      # Upload to S3
+                      s3_client.put_object(
+                          Bucket=report_bucket,
+                          Key=filename,
+                          Body=csv_buffer.getvalue(),
+                          ContentType='text/csv'
+                      )
+                      
+                      # Send SNS notification if SNS topic ARN is provided
+                      if sns_topic_arn:
+                          message = f"Inactive IAM access keys report has been generated and saved to s3://{report_bucket}/{filename}.\n\n"
+                          message += f"Total inactive keys found: {len(inactive_keys_report)}\n"
+                          
+                          sns_client.publish(
+                              TopicArn=sns_topic_arn,
+                              Subject="Inactive IAM Access Keys Report Generated",
+                              Message=message
+                          )
+                  
+                      print(f"Report saved to s3://{report_bucket}/{filename}")
+                      
+                  return {
+                      'statusCode': 200,
+                      'inactive_keys_count': len(inactive_keys_report),
+                      'report_location': f"s3://{report_bucket}/{filename}" if inactive_keys_report else "No inactive keys found"
+                  }
+          
+              except Exception as e:
+                  print(f"Error occurred: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'error': str(e)
+                  }
+
+  WeeklyScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: InactiveAccessKeysScheduleRule
+      Description: Trigger Lambda on schedule to check for inactive IAM keys
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt InactiveAccessKeysLambdaFunction.Arn
+          Id: TargetFunctionV1
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref InactiveAccessKeysLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WeeklyScheduleRule.Arn
+
+  InactiveKeysSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: InactiveIAMKeysAlertTopic
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
+Outputs:
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref InactiveAccessKeysLambdaFunction
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt InactiveAccessKeysLambdaFunction.Arn
+
+  SNSTopicArn:
+    Description: ARN of the SNS topic for notifications
+    Value: !Ref InactiveKeysSNSTopic
