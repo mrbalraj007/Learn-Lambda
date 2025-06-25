@@ -36,7 +36,7 @@ run_aws_cmd() {
     result=$(aws "$@" 2>/dev/null)
     if [ $? -ne 0 ]; then
         echo "Warning: Failed to execute: aws $*" >&2
-        echo "[]"
+        echo "{}"  # Return empty valid JSON object instead of empty string
     else
         echo "$result"
     fi
@@ -79,7 +79,11 @@ echo "LB_Name,LB_ARN,DNS_Name,Scheme,State,VPC_ID,Subnets,AvailabilityZones,Targ
 echo "Fetching Classic Load Balancers..."
 clbs=$(run_aws_cmd elb describe-load-balancers)
 
-if [ "$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')" -gt 0 ]; then
+# Add default fields to avoid errors if they don't exist
+clbs=$(echo "$clbs" | jq '. += {"LoadBalancerDescriptions": []} | select(.LoadBalancerDescriptions == null) |= {"LoadBalancerDescriptions": []}')
+num_clbs=$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')
+
+if [ "$num_clbs" -gt 0 ]; then
     for lb in $(echo "$clbs" | jq -c '.LoadBalancerDescriptions[]'); do
         lb_name=$(echo "$lb" | jq -r '.LoadBalancerName')
         dns_name=$(echo "$lb" | jq -r '.DNSName')
@@ -122,7 +126,7 @@ if [ "$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')" -gt 0 ]; the
             done
         fi
     done
-    echo "Processed $(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length') Classic Load Balancer(s)"
+    echo "Processed $num_clbs Classic Load Balancer(s)"
 else
     echo "No Classic Load Balancers found"
 fi
@@ -131,7 +135,11 @@ fi
 echo "Fetching Application, Network, and Gateway Load Balancers..."
 lbs=$(run_aws_cmd elbv2 describe-load-balancers)
 
-if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
+# Add default fields to avoid errors if they don't exist
+lbs=$(echo "$lbs" | jq '. += {"LoadBalancers": []} | select(.LoadBalancers == null) |= {"LoadBalancers": []}')
+num_lbs=$(echo "$lbs" | jq -r '.LoadBalancers | length')
+
+if [ "$num_lbs" -gt 0 ]; then
     for lb in $(echo "$lbs" | jq -c '.LoadBalancers[]'); do
         lb_arn=$(echo "$lb" | jq -r '.LoadBalancerArn')
         lb_name=$(echo "$lb" | jq -r '.LoadBalancerName')
