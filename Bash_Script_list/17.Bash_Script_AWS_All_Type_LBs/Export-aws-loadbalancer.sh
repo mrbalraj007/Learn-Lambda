@@ -332,6 +332,69 @@ if [ "$num_lbs" -gt 0 ]; then
     echo "  - $(grep -c "," "$glb_file" 2>/dev/null | awk '{print $1-1}') Gateway Load Balancer entries"
 else
     echo "No Application, Network, or Gateway Load Balancers found"
+    
+    # Check if we should scan other regions
+    total_lbs_found=0
+    if [ "$num_clbs" -eq 0 ] && [ "$num_lbs" -eq 0 ]; then
+        echo ""
+        echo "Would you like to scan all AWS regions for load balancers? (y/n)"
+        read -r scan_all_regions
+        
+        if [[ "$scan_all_regions" =~ ^[Yy]$ ]]; then
+            echo "Scanning all AWS regions for load balancers..."
+            
+            # Get list of all AWS regions
+            all_regions=$(aws ec2 describe-regions --query 'Regions[].RegionName' --output text)
+            
+            echo "Found $(echo "$all_regions" | wc -w) regions to scan"
+            echo "This may take a while..."
+            
+            # Create summary file
+            region_summary="$output_dir/region_summary.csv"
+            echo "Region,Classic_LB_Count,Application_LB_Count,Network_LB_Count,Gateway_LB_Count,Total_LB_Count" > "$region_summary"
+            
+            # Check each region
+            for region in $all_regions; do
+                echo -n "Checking region $region... "
+                
+                # Check Classic LBs
+                clb_count=$(aws elb describe-load-balancers --region "$region" --query 'length(LoadBalancerDescriptions)' --output text 2>/dev/null || echo 0)
+                
+                # Check ELBv2 (ALB, NLB, GLB)
+                elbv2_output=$(aws elbv2 describe-load-balancers --region "$region" 2>/dev/null || echo '{"LoadBalancers":[]}')
+                alb_count=$(echo "$elbv2_output" | jq '[.LoadBalancers[] | select(.Type=="application")] | length' 2>/dev/null || echo 0)
+                nlb_count=$(echo "$elbv2_output" | jq '[.LoadBalancers[] | select(.Type=="network")] | length' 2>/dev/null || echo 0)
+                gwlb_count=$(echo "$elbv2_output" | jq '[.LoadBalancers[] | select(.Type=="gateway")] | length' 2>/dev/null || echo 0)
+                
+                # Calculate total
+                total_count=$((clb_count + alb_count + nlb_count + gwlb_count))
+                total_lbs_found=$((total_lbs_found + total_count))
+                
+                # Add to summary
+                echo "$region,$clb_count,$alb_count,$nlb_count,$gwlb_count,$total_count" >> "$region_summary"
+                
+                # Show result for this region
+                if [ "$total_count" -gt 0 ]; then
+                    echo "Found $total_count load balancer(s): $clb_count CLB, $alb_count ALB, $nlb_count NLB, $gwlb_count GWLB"
+                else
+                    echo "None found"
+                fi
+            done
+            
+            # Display summary
+            if [ "$total_lbs_found" -gt 0 ]; then
+                echo ""
+                echo "Summary: Found $total_lbs_found load balancers across all regions."
+                echo "See detailed breakdown in $region_summary"
+                echo ""
+                echo "To export load balancers from a specific region, run:"
+                echo "  $0 -r <region_name>"
+            else
+                echo ""
+                echo "No load balancers found in any region."
+            fi
+        fi
+    fi
 fi
 
 # Create a helper script to convert CSVs to Excel with multiple sheets
@@ -389,6 +452,7 @@ echo "Then run:"
 echo "  python3 $output_dir/convert_to_excel.py"
 echo ""
 echo "TIP: If no load balancers were found but you expected some, try:"
-echo "  1. Check your AWS credentials and permissions"
-echo "  2. Try a different region: $0 -r us-east-1"
+echo "  1. Check your AWS credentials and permissions (try: aws iam get-user)"
+echo "  2. Try a different region: $0 -r us-east-1" 
 echo "  3. Run with debug mode: $0 -d"
+echo "  4. Verify AWS CLI configuration: aws configure list"
