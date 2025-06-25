@@ -9,13 +9,19 @@ set -e
 
 # Parse command line arguments
 DEBUG=0
-while getopts "r:d" opt; do
+SCAN_ALL_REGIONS=0
+AUTO_EXPORT=0
+while getopts "r:das" opt; do
   case $opt in
     r) AWS_DEFAULT_REGION="$OPTARG" ;;
     d) DEBUG=1 ;;
-    *) echo "Usage: $0 [-r region] [-d]" >&2
+    a) SCAN_ALL_REGIONS=1 ;;
+    s) AUTO_EXPORT=1 ;; # Silent mode - automatically export from regions with LBs
+    *) echo "Usage: $0 [-r region] [-d] [-a] [-s]" >&2
        echo "  -r: AWS region (default: ap-southeast-2)" >&2
        echo "  -d: Enable debug mode" >&2
+       echo "  -a: Scan all regions automatically" >&2
+       echo "  -s: Silent mode - automatically export from regions with LBs" >&2
        exit 1 ;;
   esac
 done
@@ -336,9 +342,16 @@ else
     # Check if we should scan other regions
     total_lbs_found=0
     if [ "$num_clbs" -eq 0 ] && [ "$num_lbs" -eq 0 ]; then
-        echo ""
-        echo "Would you like to scan all AWS regions for load balancers? (y/n)"
-        read -r scan_all_regions
+        scan_all_regions="n"
+        
+        # Auto-scan if flag is set, otherwise ask
+        if [ $SCAN_ALL_REGIONS -eq 1 ]; then
+            scan_all_regions="y"
+        else
+            echo ""
+            echo "Would you like to scan all AWS regions for load balancers? (y/n)"
+            read -r scan_all_regions
+        fi
         
         if [[ "$scan_all_regions" =~ ^[Yy]$ ]]; then
             echo "Scanning all AWS regions for load balancers..."
@@ -352,6 +365,9 @@ else
             # Create summary file
             region_summary="$output_dir/region_summary.csv"
             echo "Region,Classic_LB_Count,Application_LB_Count,Network_LB_Count,Gateway_LB_Count,Total_LB_Count" > "$region_summary"
+            
+            # Track regions with LBs for potential export
+            regions_with_lbs=()
             
             # Check each region
             for region in $all_regions; do
@@ -376,6 +392,8 @@ else
                 # Show result for this region
                 if [ "$total_count" -gt 0 ]; then
                     echo "Found $total_count load balancer(s): $clb_count CLB, $alb_count ALB, $nlb_count NLB, $gwlb_count GWLB"
+                    # Add to list of regions with LBs
+                    regions_with_lbs+=("$region:$total_count:$clb_count:$alb_count:$nlb_count:$gwlb_count")
                 else
                     echo "None found"
                 fi
@@ -386,9 +404,34 @@ else
                 echo ""
                 echo "Summary: Found $total_lbs_found load balancers across all regions."
                 echo "See detailed breakdown in $region_summary"
-                echo ""
-                echo "To export load balancers from a specific region, run:"
-                echo "  $0 -r <region_name>"
+                
+                # Ask if user wants to export from regions with LBs
+                if [ ${#regions_with_lbs[@]} -gt 0 ] && [ $AUTO_EXPORT -eq 0 ]; then
+                    echo ""
+                    echo "Do you want to export load balancers from regions where they were found? (y/n)"
+                    read -r export_from_regions
+                    
+                    if [[ "$export_from_regions" =~ ^[Yy]$ ]]; then
+                        AUTO_EXPORT=1
+                    fi
+                fi
+                
+                # Auto export from regions with LBs if requested
+                if [ $AUTO_EXPORT -eq 1 ]; then
+                    for region_info in "${regions_with_lbs[@]}"; do
+                        IFS=':' read -r region total clbs albs nlbs gwlbs <<< "$region_info"
+                        
+                        echo ""
+                        echo "Exporting from region $region ($total LBs)..."
+                        
+                        # Call this script recursively for each region with LBs
+                        "$0" -r "$region"
+                    done
+                else
+                    echo ""
+                    echo "To export load balancers from a specific region, run:"
+                    echo "  $0 -r <region_name>"
+                fi
             else
                 echo ""
                 echo "No load balancers found in any region."
@@ -456,3 +499,4 @@ echo "  1. Check your AWS credentials and permissions (try: aws iam get-user)"
 echo "  2. Try a different region: $0 -r us-east-1" 
 echo "  3. Run with debug mode: $0 -d"
 echo "  4. Verify AWS CLI configuration: aws configure list"
+echo "  5. Scan all regions and auto-export: $0 -a -s"

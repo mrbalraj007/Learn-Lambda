@@ -57,3 +57,8 @@ The script creates a directory with the current timestamp containing:
 - The default AWS region is set to `us-east-1`. Modify the script to change the region.
 - The script includes error handling for AWS API calls.
 - Large environments may take some time to process all resources.
+
+
+To use these new features, you can run:
+
+'./export-aws-loadbalancer.sh -a -s' to scan all regions and automatically export load balancers from any regions where they're found
