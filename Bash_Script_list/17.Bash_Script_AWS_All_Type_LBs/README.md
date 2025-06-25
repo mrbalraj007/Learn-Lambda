@@ -1,64 +1,100 @@
-# AWS Load Balancer Export Tool
+# AWS Load Balancer Export & Analysis Tool
 
-This tool exports detailed information about all AWS Load Balancers in your environment to CSV files, with separate files for each load balancer type.
+This toolset enables comprehensive extraction and analysis of AWS Load Balancer configurations across all types (Classic, Application, Network, and Gateway Load Balancers).
 
-## Features
+## Overview
 
-- Exports information for all load balancer types:
-  - Classic Load Balancers (CLB)
-  - Application Load Balancers (ALB)
-  - Network Load Balancers (NLB)
-  - Gateway Load Balancers (GLB)
-- Captures associated resources:
-  - Target Groups
-  - Listeners
-  - Health Checks
-  - Security Groups
-  - Subnets and Availability Zones
-  - SSL Certificates
-  - Tags
+The toolkit consists of two scripts:
 
-## Requirements
+1. **`export-aws-loadbalancer.sh`**: Exports detailed configuration of all AWS load balancers
+2. **`lb-data-processor.sh`**: Post-processes exported data to generate additional insights and reports
+
+## Prerequisites
 
 - AWS CLI installed and configured with appropriate permissions
-- jq (command-line JSON processor)
-- (Optional) Python with pandas and openpyxl for Excel conversion
+- jq utility installed (`apt-get install jq` or `yum install jq`)
+- Bash shell environment
+- Optional: Python 3 with pandas and openpyxl libraries for enhanced reporting
 
-## Usage
+## Quick Start Guide
 
-1. Make the script executable:
-   ```
-   chmod +x export-aws-loadbalancers.sh
-   ```
+### Step 1: Run the Export Script
 
-2. Run the script:
-   ```
-   ./export-aws-loadbalancers.sh
-   ```
+First, run the main export script to gather all load balancer information:
 
-3. (Optional) To combine the CSV files into a single Excel file with multiple sheets:
-   ```
-   pip install pandas openpyxl
-   python3 aws_lb_export_YYYYMMDD_HHMMSS/convert_to_excel.py
-   ```
+```bash
+./export-aws-loadbalancer.sh
+```
 
-## Output
+This will:
+- Export all load balancer configurations to CSV files
+- Create a timestamped output directory (e.g., `aws_lb_export_20230501_120000`)
+- Generate seven CSV files with detailed information
 
-The script creates a directory with the current timestamp containing:
+### Step 2: Run the Data Processor Script
 
-- `classic_load_balancers.csv`: Information about CLBs
-- `application_load_balancers.csv`: Information about ALBs
-- `network_load_balancers.csv`: Information about NLBs
-- `gateway_load_balancers.csv`: Information about GLBs
-- `convert_to_excel.py`: Helper script to convert CSVs to an Excel file
+After the export completes, run the data processor script on the generated directory:
 
-## Notes
+```bash
+./lb-data-processor.sh aws_lb_export_20230501_120000
+```
 
-- The default AWS region is set to `us-east-1`. Modify the script to change the region.
-- The script includes error handling for AWS API calls.
-- Large environments may take some time to process all resources.
+Replace `aws_lb_export_20230501_120000` with the actual directory name created by the export script.
 
+This will:
+- Generate additional summary reports
+- Create cross-references between resources
+- Analyze security groups, certificates, and routing rules
 
-To use these new features, you can run:
+### Step 3: Generate Excel Report (Optional)
 
-'./export-aws-loadbalancer.sh -a -s' to scan all regions and automatically export load balancers from any regions where they're found
+To combine all CSVs into a single Excel file with multiple sheets:
+
+```bash
+cd aws_lb_export_20230501_120000
+python3 convert_to_excel.py
+```
+
+## Detailed Output Files
+
+### Export Script Output
+
+The export script generates the following files:
+
+| File | Description |
+|------|-------------|
+| `classic_load_balancers.csv` | Classic Load Balancer configurations |
+| `application_load_balancers.csv` | Application Load Balancer configurations |
+| `network_load_balancers.csv` | Network Load Balancer configurations |
+| `gateway_load_balancers.csv` | Gateway Load Balancer configurations |
+| `load_balancer_attributes.csv` | Additional attributes for all load balancers |
+| `target_groups_details.csv` | Detailed target group information |
+| `alb_routing_rules.csv` | ALB routing rule configurations |
+
+### Data Processor Output
+
+The data processor script creates:
+
+| File | Description |
+|------|-------------|
+| `processed/lb_summary.txt` | Summary report with counts and statistics |
+| `processed/lb_to_targetgroups.csv` | Cross-reference between LBs and target groups |
+
+## AWS Region Selection
+
+By default, the scripts use `ap-southeast-2` region. To use a different region:
+
+```bash
+# Option 1: Change the default in the script
+# Edit the script and change: export AWS_DEFAULT_REGION="your-region"
+
+# Option 2: Set temporarily for the session
+export AWS_DEFAULT_REGION="us-east-1"
+./export-aws-loadbalancer.sh
+```
+
+## Troubleshooting
+
+### AWS Authentication Issues
+
+If you encounter authentication errors:
