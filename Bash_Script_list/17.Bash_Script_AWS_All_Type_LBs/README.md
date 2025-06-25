@@ -98,3 +98,30 @@ export AWS_DEFAULT_REGION="us-east-1"
 ### AWS Authentication Issues
 
 If you encounter authentication errors:
+
+### Step-by-step Instructions
+1. Create a virtual environment <br>
+Choose a name for the virtual environment directory (e.g., venv):
+```bash
+python3 -m venv venv
+```
+2. Activate the virtual environment
+```bash
+source venv/bin/activate
+```
+You'll know it's activated when your shell prompt is prefixed with `(venv)`.
+
+3. Install pandas in the virtual environment
+```bash
+pip install pandas
+```
+4. Run your script using the Python in the virtual environment
+```bash
+python3 aws_lb_export_20250625_153748/convert_to_excel.py
+```
+ℹ️ Notes
+- To deactivate the virtual environment when you're done:
+```bash
+deactivate
+```
+This method avoids modifying the system Python and keeps your environment clean.
