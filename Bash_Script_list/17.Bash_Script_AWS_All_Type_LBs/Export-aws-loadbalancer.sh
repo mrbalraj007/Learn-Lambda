@@ -36,7 +36,28 @@ run_aws_cmd() {
     result=$(aws "$@" 2>/dev/null)
     if [ $? -ne 0 ]; then
         echo "Warning: Failed to execute: aws $*" >&2
-        echo "[]"
+        echo "{}"  # Return empty object instead of empty array
+    else
+        echo "$result"
+    fi
+}
+
+# Function to safely parse JSON with jq
+safe_jq() {
+    local json="$1"
+    local query="$2"
+    local default="$3"
+    
+    # Check if input is valid JSON
+    if ! echo "$json" | jq -e . >/dev/null 2>&1; then
+        echo "$default"
+        return
+    fi
+    
+    # Run the query and return default if it fails
+    result=$(echo "$json" | jq -r "$query" 2>/dev/null)
+    if [ $? -ne 0 ] || [ -z "$result" ] || [ "$result" == "null" ]; then
+        echo "$default"
     else
         echo "$result"
     fi
@@ -55,11 +76,11 @@ get_tags() {
         local lb_name=$(echo "$arn" | awk -F: '{print $NF}' | sed 's/loadbalancer\///')
         tags=$(run_aws_cmd elb describe-tags --load-balancer-names "$lb_name" --query 'TagDescriptions[0].Tags')
     else
-        tags="[]"
+        tags="{}"
     fi
     
     # Format tags as Key=Value|Key=Value
-    if [ -z "$tags" ] || [ "$tags" == "[]" ] || [ "$tags" == "null" ]; then
+    if [ -z "$tags" ] || [ "$tags" == "{}" ] || [ "$tags" == "null" ]; then
         echo "N/A"
     else
         echo "$tags" | jq -r 'map("\(.Key)=\(.Value)") | join("|")' 2>/dev/null || echo "N/A"
@@ -79,8 +100,8 @@ echo "LB_Name,LB_ARN,DNS_Name,Scheme,State,VPC_ID,Subnets,AvailabilityZones,Targ
 echo "Fetching Classic Load Balancers..."
 clbs=$(run_aws_cmd elb describe-load-balancers)
 
-if [ "$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')" -gt 0 ]; then
-    for lb in $(echo "$clbs" | jq -c '.LoadBalancerDescriptions[]'); do
+if [ "$(safe_jq "$clbs" '.LoadBalancerDescriptions | length' 0)" -gt 0 ]; then
+    for lb in $(safe_jq "$clbs" '.LoadBalancerDescriptions[]' '{}' | jq -c '.'); do
         lb_name=$(echo "$lb" | jq -r '.LoadBalancerName')
         dns_name=$(echo "$lb" | jq -r '.DNSName')
         scheme=$(echo "$lb" | jq -r '.Scheme // "internet-facing"')
@@ -122,7 +143,7 @@ if [ "$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')" -gt 0 ]; the
             done
         fi
     done
-    echo "Processed $(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length') Classic Load Balancer(s)"
+    echo "Processed $(safe_jq "$clbs" '.LoadBalancerDescriptions | length' 0) Classic Load Balancer(s)"
 else
     echo "No Classic Load Balancers found"
 fi
@@ -131,11 +152,11 @@ fi
 echo "Fetching Application, Network, and Gateway Load Balancers..."
 lbs=$(run_aws_cmd elbv2 describe-load-balancers)
 
-if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
-    for lb in $(echo "$lbs" | jq -c '.LoadBalancers[]'); do
-        lb_arn=$(echo "$lb" | jq -r '.LoadBalancerArn')
-        lb_name=$(echo "$lb" | jq -r '.LoadBalancerName')
-        lb_type=$(echo "$lb" | jq -r '.Type')
+if [ "$(safe_jq "$lbs" '.LoadBalancers | length' 0)" -gt 0 ]; then
+    for lb in $(safe_jq "$lbs" '.LoadBalancers[]' '{}' | jq -c '.'); do
+        lb_arn=$(safe_jq "$lb" '.LoadBalancerArn' 'N/A')
+        lb_name=$(safe_jq "$lb" '.LoadBalancerName' 'N/A')
+        lb_type=$(safe_jq "$lb" '.Type' 'unknown')
         
         # Determine output file based on LB type
         if [ "$lb_type" == "application" ]; then
@@ -149,21 +170,21 @@ if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
             continue
         fi
         
-        dns_name=$(echo "$lb" | jq -r '.DNSName')
-        scheme=$(echo "$lb" | jq -r '.Scheme // "internet-facing"')
-        state=$(echo "$lb" | jq -r '.State.Code')
-        vpc_id=$(echo "$lb" | jq -r '.VpcId')
+        dns_name=$(safe_jq "$lb" '.DNSName' 'N/A')
+        scheme=$(safe_jq "$lb" '.Scheme // "internet-facing"' 'internet-facing')
+        state=$(safe_jq "$lb" '.State.Code' 'N/A')
+        vpc_id=$(safe_jq "$lb" '.VpcId' 'N/A')
         
         # Security groups (only for ALB)
         security_groups="N/A"
         if [ "$lb_type" == "application" ]; then
-            security_groups=$(echo "$lb" | jq -r '.SecurityGroups | join("|") // "N/A"')
+            security_groups=$(safe_jq "$lb" '.SecurityGroups | join("|") // "N/A"' 'N/A')
         fi
         
         # Subnets and AZs
-        az_info=$(echo "$lb" | jq -c '.AvailabilityZones')
-        azs=$(echo "$az_info" | jq -r '.[].ZoneName' | paste -sd "|" -)
-        subnets=$(echo "$az_info" | jq -r '.[].SubnetId' | paste -sd "|" -)
+        az_info=$(safe_jq "$lb" '.AvailabilityZones' '[]')
+        azs=$(echo "$az_info" | jq -r '.[].ZoneName' 2>/dev/null | paste -sd "|" - || echo "N/A")
+        subnets=$(echo "$az_info" | jq -r '.[].SubnetId' 2>/dev/null | paste -sd "|" - || echo "N/A")
         
         # Tags
         tags=$(get_tags "$lb_arn")
@@ -175,7 +196,7 @@ if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
         listeners=$(run_aws_cmd elbv2 describe-listeners --load-balancer-arn "$lb_arn")
         
         # If no target groups, output basic LB info
-        if [ "$(echo "$tgs" | jq -r '.TargetGroups | length')" -eq 0 ]; then
+        if [ "$(safe_jq "$tgs" '.TargetGroups | length' 0)" -eq 0 ]; then
             if [ "$lb_type" == "application" ]; then
                 echo "\"$lb_name\",\"$lb_arn\",\"$dns_name\",\"$scheme\",\"$state\",\"$vpc_id\",\"$security_groups\",\"$subnets\",\"$azs\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"$tags\"" >> "$output_file"
             elif [ "$lb_type" == "network" ]; then
@@ -187,20 +208,20 @@ if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
         fi
         
         # Process target groups
-        for tg in $(echo "$tgs" | jq -c '.TargetGroups[]'); do
-            tg_arn=$(echo "$tg" | jq -r '.TargetGroupArn')
-            tg_name=$(echo "$tg" | jq -r '.TargetGroupName')
-            tg_protocol=$(echo "$tg" | jq -r '.Protocol')
-            tg_port=$(echo "$tg" | jq -r '.Port')
-            tg_type=$(echo "$tg" | jq -r '.TargetType')
+        for tg in $(safe_jq "$tgs" '.TargetGroups[]' '{}' | jq -c '.'); do
+            tg_arn=$(safe_jq "$tg" '.TargetGroupArn' 'N/A')
+            tg_name=$(safe_jq "$tg" '.TargetGroupName' 'N/A')
+            tg_protocol=$(safe_jq "$tg" '.Protocol' 'N/A')
+            tg_port=$(safe_jq "$tg" '.Port' 'N/A')
+            tg_type=$(safe_jq "$tg" '.TargetType' 'N/A')
             
             # Health check info
-            hc_path=$(echo "$tg" | jq -r '.HealthCheckPath // "N/A"')
-            hc_port=$(echo "$tg" | jq -r '.HealthCheckPort')
-            healthy_threshold=$(echo "$tg" | jq -r '.HealthyThresholdCount')
-            unhealthy_threshold=$(echo "$tg" | jq -r '.UnhealthyThresholdCount')
-            timeout=$(echo "$tg" | jq -r '.HealthCheckTimeoutSeconds')
-            interval=$(echo "$tg" | jq -r '.HealthCheckIntervalSeconds')
+            hc_path=$(safe_jq "$tg" '.HealthCheckPath // "N/A"' 'N/A')
+            hc_port=$(safe_jq "$tg" '.HealthCheckPort' 'N/A')
+            healthy_threshold=$(safe_jq "$tg" '.HealthyThresholdCount' 'N/A')
+            unhealthy_threshold=$(safe_jq "$tg" '.UnhealthyThresholdCount' 'N/A')
+            timeout=$(safe_jq "$tg" '.HealthCheckTimeoutSeconds' 'N/A')
+            interval=$(safe_jq "$tg" '.HealthCheckIntervalSeconds' 'N/A')
             
             # Get target group tags
             tg_tags=$(get_tags "$tg_arn")
@@ -208,7 +229,7 @@ if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
             [ "$tg_tags" != "N/A" ] && combined_tags="${tags}|${tg_tags}"
             
             # If no listeners, output with target group info only
-            if [ "$(echo "$listeners" | jq -r '.Listeners | length')" -eq 0 ]; then
+            if [ "$(safe_jq "$listeners" '.Listeners | length' 0)" -eq 0 ]; then
                 if [ "$lb_type" == "application" ]; then
                     echo "\"$lb_name\",\"$lb_arn\",\"$dns_name\",\"$scheme\",\"$state\",\"$vpc_id\",\"$security_groups\",\"$subnets\",\"$azs\",\"$tg_name\",\"$tg_arn\",\"$tg_type\",\"$tg_protocol\",\"$tg_port\",\"$hc_path\",\"$hc_port\",\"$healthy_threshold\",\"$unhealthy_threshold\",\"$timeout\",\"$interval\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"$combined_tags\"" >> "$output_file"
                 elif [ "$lb_type" == "network" ]; then
@@ -222,22 +243,33 @@ if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
             # Find listeners associated with this target group
             listener_found=false
             
-            for listener in $(echo "$listeners" | jq -c '.Listeners[]'); do
-                listener_arn=$(echo "$listener" | jq -r '.ListenerArn')
-                listener_protocol=$(echo "$listener" | jq -r '.Protocol')
-                listener_port=$(echo "$listener" | jq -r '.Port')
+            for listener in $(safe_jq "$listeners" '.Listeners[]' '{}' | jq -c '.'); do
+                listener_arn=$(safe_jq "$listener" '.ListenerArn' 'N/A')
+                listener_protocol=$(safe_jq "$listener" '.Protocol' 'N/A')
+                listener_port=$(safe_jq "$listener" '.Port' 'N/A')
                 
                 # Check rules to see if they reference this target group
-                rules=$(run_aws_cmd elbv2 describe-rules --listener-arn "$listener_arn")
+                rules_json=$(run_aws_cmd elbv2 describe-rules --listener-arn "$listener_arn")
                 
+                # Safely check if rules exist and contain our target group
                 tg_used=false
-                for rule in $(echo "$rules" | jq -c '.Rules[]'); do
-                    actions=$(echo "$rule" | jq -c '.Actions')
-                    if [ "$(echo "$actions" | jq -r "[.[] | select(.TargetGroupArn == \"$tg_arn\")] | length")" -gt 0 ]; then
+                
+                # The key fix: safely process rules
+                if echo "$rules_json" | jq -e '.Rules' >/dev/null 2>&1; then
+                    for rule in $(safe_jq "$rules_json" '.Rules[]' '{}' | jq -c '.'); do
+                        actions=$(safe_jq "$rule" '.Actions' '[]')
+                        if [ "$(echo "$actions" | jq -r "[.[] | select(.TargetGroupArn == \"$tg_arn\")] | length")" -gt 0 ]; then
+                            tg_used=true
+                            break
+                        fi
+                    done
+                else
+                    # If default actions contain this target group
+                    default_actions=$(safe_jq "$listener" '.DefaultActions' '[]')
+                    if [ "$(echo "$default_actions" | jq -r "[.[] | select(.TargetGroupArn == \"$tg_arn\")] | length")" -gt 0 ]; then
                         tg_used=true
-                        break
                     fi
-                done
+                fi
                 
                 if $tg_used; then
                     listener_found=true
