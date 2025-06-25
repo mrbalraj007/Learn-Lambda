@@ -99,7 +99,13 @@ export AWS_DEFAULT_REGION="us-east-1"
 
 If you encounter authentication errors:
 
-### Step-by-step Instructions
+### Run the automatically
+1. Activate the virtual environment
+```bash
+source venv/bin/activate
+```
+
+### Step-by-step Instructions (Manually)
 1. Create a virtual environment <br>
 Choose a name for the virtual environment directory (e.g., venv):
 ```bash
