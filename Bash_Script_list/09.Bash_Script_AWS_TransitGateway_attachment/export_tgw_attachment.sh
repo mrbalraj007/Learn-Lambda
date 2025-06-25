@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set AWS region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 
 # CSV file name with timestamp
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)

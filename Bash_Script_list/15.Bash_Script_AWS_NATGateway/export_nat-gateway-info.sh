@@ -2,7 +2,7 @@
 # filepath: c:\MY_DevOps_Journey\Learn-Lambda\29.Bash_Script_AWS_NATGateway\export_nat_gateway_info.sh
 
 # Set variables
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 OUTPUT_FILE="nat_gateway_details.csv"
 DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 FINAL_OUTPUT="${OUTPUT_FILE%.csv}_${DATE}.csv"

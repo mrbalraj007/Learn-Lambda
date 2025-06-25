@@ -7,7 +7,7 @@
 set -e
 
 # Set default AWS region
-export AWS_DEFAULT_REGION="us-east-1"
+export AWS_DEFAULT_REGION="ap-southeast-2"
 
 # Output file
 output_file="aws_routes_$(date +%Y%m%d_%H%M%S).csv"

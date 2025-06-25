@@ -6,7 +6,7 @@
 # Default region: us-east-1
 
 # Set default region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 OUTPUT_FILE="tgw_routes_$(date +%Y%m%d_%H%M%S).csv"
 
 # Function to display usage information

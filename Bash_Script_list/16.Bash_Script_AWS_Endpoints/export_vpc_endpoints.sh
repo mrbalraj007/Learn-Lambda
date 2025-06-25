@@ -4,7 +4,7 @@
 # Exports: Name, VPC Endpoint ID, VPC ID, VPC Name, Service Name, Endpoint Type
 
 # Set the AWS region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 export AWS_DEFAULT_REGION=$AWS_REGION
 
 # CSV file to store the output

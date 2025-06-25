@@ -5,7 +5,7 @@
 # Description: Exports SecurityGroup information including GroupID, GroupName, VPC ID, Description, and Owner
 
 # Set default region
-REGION="us-east-1"
+REGION="ap-southeast-2"
 OUTPUT_FILE="security_groups_$(date +%Y%m%d_%H%M%S).csv"
 
 # Check dependencies

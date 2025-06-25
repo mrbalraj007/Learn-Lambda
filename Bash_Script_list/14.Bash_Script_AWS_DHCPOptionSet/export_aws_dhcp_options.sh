@@ -5,7 +5,7 @@
 # Default region: us-east-1
 
 # Set AWS region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 
 # Get current timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")

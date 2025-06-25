@@ -8,7 +8,7 @@
 set -e
 
 # Set default region
-export AWS_DEFAULT_REGION="us-east-1"
+export AWS_DEFAULT_REGION="ap-southeast-2"
 
 # Create output directory with timestamp
 timestamp=$(date +%Y%m%d_%H%M%S)

@@ -5,7 +5,7 @@
 # Description: Exports AWS subnet association information to a CSV file
 
 # Set AWS default region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 export AWS_DEFAULT_REGION=$AWS_REGION
 
 # Output CSV file

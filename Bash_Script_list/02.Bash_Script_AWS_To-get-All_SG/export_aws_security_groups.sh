@@ -4,7 +4,7 @@
 # Author: GitHub Copilot
 
 # Set default region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 
 # Check for dependencies
 command -v aws >/dev/null 2>&1 || { echo "Error: AWS CLI is required but not installed. Aborting."; exit 1; }

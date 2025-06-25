@@ -6,7 +6,7 @@
 #
 
 # Set default region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 OUTPUT_FILE="internet_gateways_info.csv"
 CURRENT_DATE=$(date +"%Y-%m-%d-%H-%M-%S")
 OUTPUT_FILE="internet_gateways_${CURRENT_DATE}.csv"

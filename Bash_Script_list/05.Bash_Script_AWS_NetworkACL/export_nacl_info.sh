@@ -4,7 +4,7 @@
 # Default region: us-east-1
 
 # Set AWS region
-export AWS_DEFAULT_REGION="us-east-1"
+export AWS_DEFAULT_REGION="ap-southeast-2"
 
 # Define output CSV file
 output_file="network_acl_info.csv"

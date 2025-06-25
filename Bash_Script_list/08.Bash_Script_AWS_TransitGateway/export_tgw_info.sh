@@ -4,7 +4,7 @@
 # Output is organized by Attachment ID and saved to a CSV file
 
 # Set default region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 OUTPUT_FILE="tgw_attachment_info_$(date +%Y%m%d_%H%M%S).csv"
 
 # Function to escape CSV fields that may contain commas

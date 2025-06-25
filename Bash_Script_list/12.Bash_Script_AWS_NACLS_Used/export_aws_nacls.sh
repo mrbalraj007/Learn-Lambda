@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set the default region
-AWS_REGION="us-east-1"
+AWS_REGION="ap-southeast-2"
 
 # Output file
 OUTPUT_FILE="aws_nacls_info.csv"
