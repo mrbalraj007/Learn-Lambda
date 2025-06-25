@@ -7,8 +7,32 @@
 
 set -e
 
-# Set default region
-export AWS_DEFAULT_REGION="ap-southeast-2"
+# Parse command line arguments
+DEBUG=0
+while getopts "r:d" opt; do
+  case $opt in
+    r) AWS_DEFAULT_REGION="$OPTARG" ;;
+    d) DEBUG=1 ;;
+    *) echo "Usage: $0 [-r region] [-d]" >&2
+       echo "  -r: AWS region (default: ap-southeast-2)" >&2
+       echo "  -d: Enable debug mode" >&2
+       exit 1 ;;
+  esac
+done
+
+# Set default region if not provided
+: ${AWS_DEFAULT_REGION:="ap-southeast-2"}
+export AWS_DEFAULT_REGION
+
+# Debug function
+debug() {
+    if [ $DEBUG -eq 1 ]; then
+        echo "DEBUG: $1" >&2
+        if [ ! -z "$2" ]; then
+            echo "$2" | jq . >&2
+        fi
+    fi
+}
 
 # Create output directory with timestamp
 timestamp=$(date +%Y%m%d_%H%M%S)
@@ -33,12 +57,19 @@ echo "Starting AWS Load Balancer export (Region: $AWS_DEFAULT_REGION)"
 
 # Function to handle AWS command errors
 run_aws_cmd() {
-    result=$(aws "$@" 2>/dev/null)
-    if [ $? -ne 0 ]; then
+    local cmd_output
+    local cmd_status
+    
+    debug "Running: aws $*"
+    cmd_output=$(aws "$@" 2>/dev/null)
+    cmd_status=$?
+    
+    if [ $cmd_status -ne 0 ]; then
         echo "Warning: Failed to execute: aws $*" >&2
-        echo "{}"  # Return empty valid JSON object instead of empty string
+        echo "{}"
     else
-        echo "$result"
+        debug "Command output:" "$cmd_output"
+        echo "$cmd_output"
     fi
 }
 
@@ -75,13 +106,26 @@ echo "LB_Name,LB_ARN,DNS_Name,Scheme,State,VPC_ID,Subnets,AvailabilityZones,Targ
 
 echo "LB_Name,LB_ARN,DNS_Name,Scheme,State,VPC_ID,Subnets,AvailabilityZones,TargetGroup_Name,TargetGroup_ARN,TargetType,TG_Protocol,TG_Port,HealthCheckPath,HealthCheckPort,HealthyThreshold,UnhealthyThreshold,HealthCheckTimeout,HealthCheckInterval,Listener_ARN,Listener_Protocol,Listener_Port,Tags" > "$glb_file"
 
+# Test AWS CLI access
+echo "Testing AWS CLI connectivity..."
+account_id=$(aws sts get-caller-identity --query 'Account' --output text 2>/dev/null)
+if [ $? -ne 0 ]; then
+    echo "Error: Cannot authenticate with AWS. Check your credentials and try again."
+    exit 1
+else
+    echo "Successfully authenticated with AWS (Account ID: $account_id)"
+fi
+
 # Process Classic Load Balancers
 echo "Fetching Classic Load Balancers..."
 clbs=$(run_aws_cmd elb describe-load-balancers)
+debug "Raw CLB response:" "$clbs"
 
 # Add default fields to avoid errors if they don't exist
 clbs=$(echo "$clbs" | jq '. += {"LoadBalancerDescriptions": []} | select(.LoadBalancerDescriptions == null) |= {"LoadBalancerDescriptions": []}')
 num_clbs=$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')
+
+debug "Number of Classic Load Balancers found: $num_clbs"
 
 if [ "$num_clbs" -gt 0 ]; then
     for lb in $(echo "$clbs" | jq -c '.LoadBalancerDescriptions[]'); do
@@ -134,10 +178,13 @@ fi
 # Process Application, Network, and Gateway Load Balancers
 echo "Fetching Application, Network, and Gateway Load Balancers..."
 lbs=$(run_aws_cmd elbv2 describe-load-balancers)
+debug "Raw ELBv2 response:" "$lbs" 
 
 # Add default fields to avoid errors if they don't exist
 lbs=$(echo "$lbs" | jq '. += {"LoadBalancers": []} | select(.LoadBalancers == null) |= {"LoadBalancers": []}')
 num_lbs=$(echo "$lbs" | jq -r '.LoadBalancers | length')
+
+debug "Number of ELBv2 Load Balancers found: $num_lbs"
 
 if [ "$num_lbs" -gt 0 ]; then
     for lb in $(echo "$lbs" | jq -c '.LoadBalancers[]'); do
@@ -340,3 +387,8 @@ echo "To combine all CSVs into a single Excel file with separate sheets, install
 echo "  pip install pandas openpyxl"
 echo "Then run:"
 echo "  python3 $output_dir/convert_to_excel.py"
+echo ""
+echo "TIP: If no load balancers were found but you expected some, try:"
+echo "  1. Check your AWS credentials and permissions"
+echo "  2. Try a different region: $0 -r us-east-1"
+echo "  3. Run with debug mode: $0 -d"
