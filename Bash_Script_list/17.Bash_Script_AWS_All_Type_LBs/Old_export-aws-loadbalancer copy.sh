@@ -7,8 +7,38 @@
 
 set -e
 
-# Set default region
-export AWS_DEFAULT_REGION="ap-southeast-2"
+# Parse command line arguments
+DEBUG=0
+SCAN_ALL_REGIONS=0
+AUTO_EXPORT=0
+while getopts "r:das" opt; do
+  case $opt in
+    r) AWS_DEFAULT_REGION="$OPTARG" ;;
+    d) DEBUG=1 ;;
+    a) SCAN_ALL_REGIONS=1 ;;
+    s) AUTO_EXPORT=1 ;; # Silent mode - automatically export from regions with LBs
+    *) echo "Usage: $0 [-r region] [-d] [-a] [-s]" >&2
+       echo "  -r: AWS region (default: ap-southeast-2)" >&2
+       echo "  -d: Enable debug mode" >&2
+       echo "  -a: Scan all regions automatically" >&2
+       echo "  -s: Silent mode - automatically export from regions with LBs" >&2
+       exit 1 ;;
+  esac
+done
+
+# Set default region if not provided
+: ${AWS_DEFAULT_REGION:="ap-southeast-2"}
+export AWS_DEFAULT_REGION
+
+# Debug function
+debug() {
+    if [ $DEBUG -eq 1 ]; then
+        echo "DEBUG: $1" >&2
+        if [ ! -z "$2" ]; then
+            echo "$2" | jq . >&2
+        fi
+    fi
+}
 
 # Create output directory with timestamp
 timestamp=$(date +%Y%m%d_%H%M%S)
@@ -33,12 +63,19 @@ echo "Starting AWS Load Balancer export (Region: $AWS_DEFAULT_REGION)"
 
 # Function to handle AWS command errors
 run_aws_cmd() {
-    result=$(aws "$@" 2>/dev/null)
-    if [ $? -ne 0 ]; then
+    local cmd_output
+    local cmd_status
+    
+    debug "Running: aws $*"
+    cmd_output=$(aws "$@" 2>/dev/null)
+    cmd_status=$?
+    
+    if [ $cmd_status -ne 0 ]; then
         echo "Warning: Failed to execute: aws $*" >&2
-        echo "[]"
+        echo "{}"
     else
-        echo "$result"
+        debug "Command output:" "$cmd_output"
+        echo "$cmd_output"
     fi
 }
 
@@ -75,11 +112,28 @@ echo "LB_Name,LB_ARN,DNS_Name,Scheme,State,VPC_ID,Subnets,AvailabilityZones,Targ
 
 echo "LB_Name,LB_ARN,DNS_Name,Scheme,State,VPC_ID,Subnets,AvailabilityZones,TargetGroup_Name,TargetGroup_ARN,TargetType,TG_Protocol,TG_Port,HealthCheckPath,HealthCheckPort,HealthyThreshold,UnhealthyThreshold,HealthCheckTimeout,HealthCheckInterval,Listener_ARN,Listener_Protocol,Listener_Port,Tags" > "$glb_file"
 
+# Test AWS CLI access
+echo "Testing AWS CLI connectivity..."
+account_id=$(aws sts get-caller-identity --query 'Account' --output text 2>/dev/null)
+if [ $? -ne 0 ]; then
+    echo "Error: Cannot authenticate with AWS. Check your credentials and try again."
+    exit 1
+else
+    echo "Successfully authenticated with AWS (Account ID: $account_id)"
+fi
+
 # Process Classic Load Balancers
 echo "Fetching Classic Load Balancers..."
 clbs=$(run_aws_cmd elb describe-load-balancers)
+debug "Raw CLB response:" "$clbs"
 
-if [ "$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')" -gt 0 ]; then
+# Add default fields to avoid errors if they don't exist
+clbs=$(echo "$clbs" | jq '. += {"LoadBalancerDescriptions": []} | select(.LoadBalancerDescriptions == null) |= {"LoadBalancerDescriptions": []}')
+num_clbs=$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')
+
+debug "Number of Classic Load Balancers found: $num_clbs"
+
+if [ "$num_clbs" -gt 0 ]; then
     for lb in $(echo "$clbs" | jq -c '.LoadBalancerDescriptions[]'); do
         lb_name=$(echo "$lb" | jq -r '.LoadBalancerName')
         dns_name=$(echo "$lb" | jq -r '.DNSName')
@@ -122,7 +176,7 @@ if [ "$(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length')" -gt 0 ]; the
             done
         fi
     done
-    echo "Processed $(echo "$clbs" | jq -r '.LoadBalancerDescriptions | length') Classic Load Balancer(s)"
+    echo "Processed $num_clbs Classic Load Balancer(s)"
 else
     echo "No Classic Load Balancers found"
 fi
@@ -130,8 +184,15 @@ fi
 # Process Application, Network, and Gateway Load Balancers
 echo "Fetching Application, Network, and Gateway Load Balancers..."
 lbs=$(run_aws_cmd elbv2 describe-load-balancers)
+debug "Raw ELBv2 response:" "$lbs" 
 
-if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
+# Add default fields to avoid errors if they don't exist
+lbs=$(echo "$lbs" | jq '. += {"LoadBalancers": []} | select(.LoadBalancers == null) |= {"LoadBalancers": []}')
+num_lbs=$(echo "$lbs" | jq -r '.LoadBalancers | length')
+
+debug "Number of ELBv2 Load Balancers found: $num_lbs"
+
+if [ "$num_lbs" -gt 0 ]; then
     for lb in $(echo "$lbs" | jq -c '.LoadBalancers[]'); do
         lb_arn=$(echo "$lb" | jq -r '.LoadBalancerArn')
         lb_name=$(echo "$lb" | jq -r '.LoadBalancerName')
@@ -277,6 +338,106 @@ if [ "$(echo "$lbs" | jq -r '.LoadBalancers | length')" -gt 0 ]; then
     echo "  - $(grep -c "," "$glb_file" 2>/dev/null | awk '{print $1-1}') Gateway Load Balancer entries"
 else
     echo "No Application, Network, or Gateway Load Balancers found"
+    
+    # Check if we should scan other regions
+    total_lbs_found=0
+    if [ "$num_clbs" -eq 0 ] && [ "$num_lbs" -eq 0 ]; then
+        scan_all_regions="n"
+        
+        # Auto-scan if flag is set, otherwise ask
+        if [ $SCAN_ALL_REGIONS -eq 1 ]; then
+            scan_all_regions="y"
+        else
+            echo ""
+            echo "Would you like to scan all AWS regions for load balancers? (y/n)"
+            read -r scan_all_regions
+        fi
+        
+        if [[ "$scan_all_regions" =~ ^[Yy]$ ]]; then
+            echo "Scanning all AWS regions for load balancers..."
+            
+            # Get list of all AWS regions
+            all_regions=$(aws ec2 describe-regions --query 'Regions[].RegionName' --output text)
+            
+            echo "Found $(echo "$all_regions" | wc -w) regions to scan"
+            echo "This may take a while..."
+            
+            # Create summary file
+            region_summary="$output_dir/region_summary.csv"
+            echo "Region,Classic_LB_Count,Application_LB_Count,Network_LB_Count,Gateway_LB_Count,Total_LB_Count" > "$region_summary"
+            
+            # Track regions with LBs for potential export
+            regions_with_lbs=()
+            
+            # Check each region
+            for region in $all_regions; do
+                echo -n "Checking region $region... "
+                
+                # Check Classic LBs
+                clb_count=$(aws elb describe-load-balancers --region "$region" --query 'length(LoadBalancerDescriptions)' --output text 2>/dev/null || echo 0)
+                
+                # Check ELBv2 (ALB, NLB, GLB)
+                elbv2_output=$(aws elbv2 describe-load-balancers --region "$region" 2>/dev/null || echo '{"LoadBalancers":[]}')
+                alb_count=$(echo "$elbv2_output" | jq '[.LoadBalancers[] | select(.Type=="application")] | length' 2>/dev/null || echo 0)
+                nlb_count=$(echo "$elbv2_output" | jq '[.LoadBalancers[] | select(.Type=="network")] | length' 2>/dev/null || echo 0)
+                gwlb_count=$(echo "$elbv2_output" | jq '[.LoadBalancers[] | select(.Type=="gateway")] | length' 2>/dev/null || echo 0)
+                
+                # Calculate total
+                total_count=$((clb_count + alb_count + nlb_count + gwlb_count))
+                total_lbs_found=$((total_lbs_found + total_count))
+                
+                # Add to summary
+                echo "$region,$clb_count,$alb_count,$nlb_count,$gwlb_count,$total_count" >> "$region_summary"
+                
+                # Show result for this region
+                if [ "$total_count" -gt 0 ]; then
+                    echo "Found $total_count load balancer(s): $clb_count CLB, $alb_count ALB, $nlb_count NLB, $gwlb_count GWLB"
+                    # Add to list of regions with LBs
+                    regions_with_lbs+=("$region:$total_count:$clb_count:$alb_count:$nlb_count:$gwlb_count")
+                else
+                    echo "None found"
+                fi
+            done
+            
+            # Display summary
+            if [ "$total_lbs_found" -gt 0 ]; then
+                echo ""
+                echo "Summary: Found $total_lbs_found load balancers across all regions."
+                echo "See detailed breakdown in $region_summary"
+                
+                # Ask if user wants to export from regions with LBs
+                if [ ${#regions_with_lbs[@]} -gt 0 ] && [ $AUTO_EXPORT -eq 0 ]; then
+                    echo ""
+                    echo "Do you want to export load balancers from regions where they were found? (y/n)"
+                    read -r export_from_regions
+                    
+                    if [[ "$export_from_regions" =~ ^[Yy]$ ]]; then
+                        AUTO_EXPORT=1
+                    fi
+                fi
+                
+                # Auto export from regions with LBs if requested
+                if [ $AUTO_EXPORT -eq 1 ]; then
+                    for region_info in "${regions_with_lbs[@]}"; do
+                        IFS=':' read -r region total clbs albs nlbs gwlbs <<< "$region_info"
+                        
+                        echo ""
+                        echo "Exporting from region $region ($total LBs)..."
+                        
+                        # Call this script recursively for each region with LBs
+                        "$0" -r "$region"
+                    done
+                else
+                    echo ""
+                    echo "To export load balancers from a specific region, run:"
+                    echo "  $0 -r <region_name>"
+                fi
+            else
+                echo ""
+                echo "No load balancers found in any region."
+            fi
+        fi
+    fi
 fi
 
 # Create a helper script to convert CSVs to Excel with multiple sheets
@@ -332,3 +493,10 @@ echo "To combine all CSVs into a single Excel file with separate sheets, install
 echo "  pip install pandas openpyxl"
 echo "Then run:"
 echo "  python3 $output_dir/convert_to_excel.py"
+echo ""
+echo "TIP: If no load balancers were found but you expected some, try:"
+echo "  1. Check your AWS credentials and permissions (try: aws iam get-user)"
+echo "  2. Try a different region: $0 -r us-east-1" 
+echo "  3. Run with debug mode: $0 -d"
+echo "  4. Verify AWS CLI configuration: aws configure list"
+echo "  5. Scan all regions and auto-export: $0 -a -s"
