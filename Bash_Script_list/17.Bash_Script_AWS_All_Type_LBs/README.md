@@ -104,11 +104,7 @@ If you encounter authentication errors:
 ```bash
 source venv/bin/activate
 ```
-2. run the bash script.
 
-```bash
-./setup_venv.sh
-```
 
 
 ### Step-by-step Instructions (Manually)
