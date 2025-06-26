@@ -1,6 +1,6 @@
 # ACM Certificate Monitoring Solution
 
-This solution automatically monitors AWS Certificate Manager (ACM) certificates, generates a weekly CSV report, stores it in an S3 bucket with a timestamp in the filename, and sends an email notification with the CSV file attached.
+This solution automatically monitors AWS Certificate Manager (ACM) certificates, generates weekly reports in both CSV and HTML formats, stores them in an S3 bucket with timestamps, and sends an email notification with both reports attached.
 
 ## Components
 
@@ -10,9 +10,13 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
 
 2. **Lambda Function (`lambda_function.py`)**:
    - Queries ACM for certificate information
-   - Generates a CSV report
-   - Uploads to S3 with timestamp in filename
-   - Sends email notification with CSV attached (uses SES with SNS fallback)
+   - Generates reports in both CSV and HTML formats
+   - The HTML report features color-coding:
+     - 🟢 Green: Valid certificates
+     - 🟡 Yellow: Certificates expiring within 30 days
+     - 🔴 Red: Expired certificates
+   - Uploads reports to S3 with timestamp in filenames
+   - Sends email notification with both reports attached (uses SES with SNS fallback)
 
 ## Deployment Instructions
 
@@ -34,14 +38,20 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
 - Lists all ACM certificates in your account
 - Reports certificate details including expiration dates
 - Calculates days remaining until expiration
-- Creates timestamped CSV reports
-- Sends email notifications with CSV attached
+- Creates reports in both CSV and HTML formats
+- HTML report includes:
+  - Color-coded expiration status
+  - Summary statistics 
+  - Attractive, easy-to-read table layout
+- Creates timestamped report files
+- Sends email notifications with both reports attached
 - Runs weekly (every Monday at midnight)
 - Uses your existing S3 bucket
 
 ## Customization
 
 - To change the schedule, modify the `ScheduleExpression` in the CloudFormation template
+- To adjust the "expiring soon" threshold (currently 30 days), modify the Lambda function
 - For email configuration, the solution attempts to use Amazon SES for sending emails with attachments
 - If SES is not available in your region or fails, it falls back to SNS notification
 
