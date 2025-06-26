@@ -61,3 +61,4 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
 - SES configuration may be required for sending emails with attachments
 - Appropriate IAM permissions to create CloudFormation stacks with IAM resources
 
+.
