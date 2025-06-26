@@ -55,88 +55,141 @@ check_ec2_health() {
     
     log "Checking EC2 instances in region: $region"
     
-    # Get all instances in the region
-    local instances=$(aws ec2 describe-instances \
+    # Get all instances in the region - add more detailed output
+    log "Retrieving EC2 instance list..."
+    local instances
+    instances=$(aws ec2 describe-instances \
         --region "$region" \
         --query 'Reservations[].Instances[].[InstanceId,InstanceType,State.Name,Tags[?Key==`Name`].Value|[0]]' \
-        --output text 2>/dev/null || echo "")
+        --output text 2>/dev/null)
     
-    if [[ -z "$instances" ]]; then
+    # Check if we got any instances
+    if [[ -z "$instances" || $(echo "$instances" | grep -v '^$' | wc -l) -eq 0 ]]; then
         log "No instances found in region $region"
         return
     fi
     
-    # Get instance status for all instances in the region
-    local instance_ids=$(echo "$instances" | awk '{print $1}' | tr '\n' ' ')
+    # Log how many instances we found
+    local instance_count=$(echo "$instances" | grep -v '^$' | wc -l)
+    log "Found $instance_count EC2 instances in region $region"
     
-    if [[ -n "$instance_ids" ]]; then
-        # Get status checks for all instances at once
-        local status_data=$(aws ec2 describe-instance-status \
-            --region "$region" \
-            --instance-ids $instance_ids \
-            --include-all-instances \
-            --query 'InstanceStatuses[].[InstanceId,InstanceState.Name,SystemStatus.Status,InstanceStatus.Status,SystemStatus.Details[0].Status,InstanceStatus.Details[0].Status]' \
-            --output text 2>/dev/null || echo "")
-        
-        # Process each instance
-        while IFS=$'\t' read -r instance_id instance_type state name_tag; do
-            [[ -z "$instance_id" ]] && continue
-            
-            # Find status info for this instance
-            local status_info=$(echo "$status_data" | grep "^$instance_id" || echo "$instance_id	unknown	not-applicable	not-applicable	unknown	unknown")
-            
-            IFS=$'\t' read -r status_instance_id instance_state system_status instance_status system_detail instance_detail <<< "$status_info"
-            
-            # Set default values if empty
-            name_tag=${name_tag:-"N/A"}
-            system_status=${system_status:-"not-applicable"}
-            instance_status=${instance_status:-"not-applicable"}
-            system_detail=${system_detail:-"unknown"}
-            instance_detail=${instance_detail:-"unknown"}
-            
-            # Determine overall health
-            local overall_status="HEALTHY"
-            local issues=""
-            
-            if [[ "$system_status" == "impaired" || "$system_detail" == "failed" ]]; then
-                overall_status="UNHEALTHY"
-                issues="${issues}System Check Failed; "
-            fi
-            
-            if [[ "$instance_status" == "impaired" || "$instance_detail" == "failed" ]]; then
-                overall_status="UNHEALTHY"
-                issues="${issues}Instance Check Failed; "
-            fi
-            
-            if [[ "$state" != "running" ]]; then
-                overall_status="NOT_RUNNING"
-                issues="${issues}Instance Not Running; "
-            fi
-            
-            # Count passed checks
-            local passed_checks=0
-            local total_checks=2
-            
-            if [[ "$system_status" == "ok" ]]; then
-                ((passed_checks++))
-            fi
-            
-            if [[ "$instance_status" == "ok" ]]; then
-                ((passed_checks++))
-            fi
-            
-            local check_ratio="${passed_checks}/${total_checks}"
-            
-            # Write to CSV
-            echo "\"$region\",\"$instance_id\",\"$name_tag\",\"$instance_type\",\"$state\",\"$system_status\",\"$instance_status\",\"$check_ratio\",\"$overall_status\",\"${issues%%; }\",\"$(date '+%Y-%m-%d %H:%M:%S')\"" >> "$OUTPUT_FILE"
-            
-            # Log unhealthy instances
-            if [[ "$overall_status" == "UNHEALTHY" ]]; then
-                log "ALERT: Instance $instance_id ($name_tag) in $region has health issues: $issues"
-            fi
-            
-        done <<< "$instances"
+    # Collect instance IDs for status check
+    local instance_ids=""
+    while IFS=$'\t' read -r instance_id rest; do
+        [[ -z "$instance_id" ]] && continue
+        instance_ids+="$instance_id "
+    done <<< "$instances"
+    
+    # Trim trailing space
+    instance_ids="${instance_ids%% }"
+    
+    if [[ -z "$instance_ids" ]]; then
+        log "No valid instance IDs found in region $region"
+        return
     fi
+    
+    log "Checking status for instances: $instance_ids"
+    
+    # Get status checks for all instances at once with error handling
+    local status_data
+    status_data=$(aws ec2 describe-instance-status \
+        --region "$region" \
+        --instance-ids $instance_ids \
+        --include-all-instances \
+        --query 'InstanceStatuses[].[InstanceId,InstanceState.Name,SystemStatus.Status,InstanceStatus.Status,SystemStatus.Details[0].Status,InstanceStatus.Details[0].Status]' \
+        --output text 2>&1)
+    
+    # Check if we got any error
+    local status_check_exit_code=$?
+    if [[ $status_check_exit_code -ne 0 ]]; then
+        log "Error checking instance status: $status_data"
+        return
+    fi
+    
+    # Log how many status records we got
+    local status_count=$(echo "$status_data" | grep -v '^$' | wc -l)
+    log "Retrieved $status_count status records"
+    
+    # Process each instance
+    while IFS=$'\t' read -r instance_id instance_type state name_tag; do
+        [[ -z "$instance_id" ]] && continue
+        
+        log "Processing instance: $instance_id ($name_tag)"
+        
+        # Find status info for this instance
+        local status_info
+        status_info=$(echo "$status_data" | grep "^$instance_id" || echo "$instance_id	unknown	not-applicable	not-applicable	unknown	unknown")
+        
+        # Parse status data
+        local status_instance_id instance_state system_status instance_status system_detail instance_detail
+        IFS=$'\t' read -r status_instance_id instance_state system_status instance_status system_detail instance_detail <<< "$status_info"
+        
+        # Set default values if empty
+        name_tag=${name_tag:-"N/A"}
+        system_status=${system_status:-"not-applicable"}
+        instance_status=${instance_status:-"not-applicable"}
+        system_detail=${system_detail:-"unknown"}
+        instance_detail=${instance_detail:-"unknown"}
+        
+        # Display what we're processing (for debugging)
+        log "  Instance: $instance_id, Name: $name_tag, Type: $instance_type, State: $state"
+        log "  System Status: $system_status, Instance Status: $instance_status"
+        
+        # Determine overall health
+        local overall_status="HEALTHY"
+        local issues=""
+        
+        if [[ "$system_status" == "impaired" || "$system_detail" == "failed" ]]; then
+            overall_status="UNHEALTHY"
+            issues="${issues}System Check Failed; "
+        fi
+        
+        if [[ "$instance_status" == "impaired" || "$instance_detail" == "failed" ]]; then
+            overall_status="UNHEALTHY"
+            issues="${issues}Instance Check Failed; "
+        fi
+        
+        if [[ "$state" != "running" ]]; then
+            overall_status="NOT_RUNNING"
+            issues="${issues}Instance Not Running; "
+        fi
+        
+        # Count passed checks
+        local passed_checks=0
+        local total_checks=2
+        
+        if [[ "$system_status" == "ok" ]]; then
+            ((passed_checks++))
+        fi
+        
+        if [[ "$instance_status" == "ok" ]]; then
+            ((passed_checks++))
+        fi
+        
+        local check_ratio="${passed_checks}/${total_checks}"
+        
+        # Log what we're writing to CSV
+        log "  Writing to CSV: $instance_id with status $overall_status ($check_ratio)"
+        
+        # Write to CSV - with output verification
+        local csv_line="\"$region\",\"$instance_id\",\"$name_tag\",\"$instance_type\",\"$state\",\"$system_status\",\"$instance_status\",\"$check_ratio\",\"$overall_status\",\"${issues%%; }\",\"$(date '+%Y-%m-%d %H:%M:%S')\""
+        echo "$csv_line" >> "$OUTPUT_FILE"
+        
+        # Verify CSV was written properly
+        if [[ $? -ne 0 ]]; then
+            log "ERROR: Failed to write to CSV file"
+        fi
+        
+        # Log unhealthy instances
+        if [[ "$overall_status" == "UNHEALTHY" ]]; then
+            log "ALERT: Instance $instance_id ($name_tag) in $region has health issues: $issues"
+        fi
+        
+    done <<< "$instances"
+    
+    # Verify data was written
+    local entries_written=$(grep -c "\"$region\"" "$OUTPUT_FILE" || echo "0")
+    log "Wrote $entries_written entries to CSV for region $region"
 }
 
 # Main execution
@@ -146,17 +199,34 @@ main() {
     # Check prerequisites
     check_aws_cli
     
-    # Create CSV header
+    # Create CSV header and ensure the file is writable
     echo "Region,InstanceId,Name,InstanceType,State,SystemStatus,InstanceStatus,StatusCheckRatio,OverallHealth,Issues,CheckTime" > "$OUTPUT_FILE"
+    if [[ $? -ne 0 ]]; then
+        error_exit "Cannot write to output file: $OUTPUT_FILE"
+    fi
+    
+    # Verify the file was created
+    if [[ ! -f "$OUTPUT_FILE" ]]; then
+        error_exit "Failed to create output file: $OUTPUT_FILE"
+    fi
+    
+    # Log that the CSV file was created
+    log "Created CSV file: $OUTPUT_FILE"
     
     # Get current region or all regions
     if [[ "${CHECK_ALL_REGIONS:-false}" == "true" ]]; then
         log "Checking all AWS regions"
         regions=$(get_regions)
     else
-        # Use current region or default
-        regions=$(aws configure get region 2>/dev/null || echo "us-east-1")
-        log "Checking current region: $regions"
+        # Use current region or default with verification
+        regions=$(aws configure get region 2>/dev/null)
+        if [[ -z "$regions" ]]; then
+            # Try to get default region from environment variable
+            regions="${AWS_DEFAULT_REGION:-us-east-1}"
+            log "No configured region found, using: $regions"
+        else
+            log "Using configured region: $regions"
+        fi
     fi
     
     # Check each region
@@ -165,15 +235,14 @@ main() {
     done
     
     # Display summary
-    local total_instances=$(tail -n +2 "$OUTPUT_FILE" | wc -l)
-    local unhealthy_instances=$(tail -n +2 "$OUTPUT_FILE" | grep -c "UNHEALTHY" || echo "0")
-    local not_running=$(tail -n +2 "$OUTPUT_FILE" | grep -c "NOT_RUNNING" || echo "0")
+    local total_instances=$(grep -v "^Region" "$OUTPUT_FILE" | wc -l || echo "0")
+    local unhealthy_instances=$(grep "UNHEALTHY" "$OUTPUT_FILE" | wc -l || echo "0")
+    local not_running=$(grep "NOT_RUNNING" "$OUTPUT_FILE" | wc -l || echo "0")
     
     log "Health check completed!"
     log "Total instances checked: $total_instances"
     log "Unhealthy instances: $unhealthy_instances"
     log "Not running instances: $not_running"
-    log "Results saved to: $OUTPUT_FILE"
     
     # Display unhealthy instances
     if [[ $unhealthy_instances -gt 0 ]]; then
