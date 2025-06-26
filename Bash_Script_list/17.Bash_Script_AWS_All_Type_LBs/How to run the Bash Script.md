@@ -17,6 +17,19 @@ The toolkit consists of two scripts:
 - Optional: Python 3 with pandas and openpyxl libraries for enhanced reporting
 
 ## Quick Start Guide
+### Step 0:  Create a Virtual Environment first and Run the following script to activate the virtual environment automatically
+
+1. run the bash script.
+
+```bash
+./setup_venv.sh
+```
+
+2. Activate the virtual environment
+```bash
+source venv/bin/activate
+```
+
 
 ### Step 1: Run the Export Script
 
@@ -99,19 +112,7 @@ export AWS_DEFAULT_REGION="us-east-1"
 
 If you encounter authentication errors:
 
-### Run the automatically
-1. Activate the virtual environment
-```bash
-source venv/bin/activate
-```
-2. run the bash script.
-
-```bash
-./setup_venv.sh
-```
-
-
-### Step-by-step Instructions (Manually)
+### Step-by-step Instructions active the virtual environment(Manually)
 1. Create a virtual environment <br>
 Choose a name for the virtual environment directory (e.g., venv):
 ```bash
