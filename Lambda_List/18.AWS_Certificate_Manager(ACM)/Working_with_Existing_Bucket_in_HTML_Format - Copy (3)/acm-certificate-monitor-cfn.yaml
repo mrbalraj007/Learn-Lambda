@@ -58,17 +58,6 @@ Resources:
                 Action:
                   - iam:ListAccountAliases
                 Resource: '*'
-              - Effect: Allow
-                Action:
-                  - ses:SendRawEmail
-                  - ses:SendEmail
-                  - ses:GetIdentityVerificationAttributes
-                  - ses:VerifyEmailIdentity
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - sts:GetCallerIdentity
-                Resource: '*'
 
   ACMCertificateMonitorLambda:
     Type: AWS::Lambda::Function

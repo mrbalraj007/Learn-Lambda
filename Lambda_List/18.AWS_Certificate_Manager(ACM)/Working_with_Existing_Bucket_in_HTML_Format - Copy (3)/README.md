@@ -49,9 +49,6 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
 - Sends email notification with HTML report attached
 - Runs weekly (every Monday at midnight)
 - Uses your existing S3 bucket
-- **Email delivery options:**
-  - Primary: Amazon SES with HTML report attachment (requires email verification)
-  - Fallback: SNS notification with S3 link (if SES fails or isn't configured)
 
 ## Customization
 
@@ -63,49 +60,5 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
 ## Prerequisites
 
 - An existing S3 bucket
-- **Amazon SES configuration for email attachments:**
-  - Verify your email address in Amazon SES console
-  - If using SES Sandbox mode, verify both sender and recipient emails
-  - For production use, consider requesting to move out of SES Sandbox
+- SES configuration may be required for sending emails with attachments
 - Appropriate IAM permissions to create CloudFormation stacks with IAM resources
-
-## SES Setup Instructions
-
-To enable email with HTML attachments:
-
-1. **Verify Email Address in SES:**
-   ```bash
-   aws ses verify-email-identity --email-address your.email@example.com
-   ```
-
-2. **Check verification status:**
-   ```bash
-   aws ses get-identity-verification-attributes --identities your.email@example.com
-   ```
-
-3. **If you're in SES Sandbox mode (default):**
-   - You can only send emails to verified email addresses
-   - Both sender and recipient must be verified
-   - To send to any email address, request production access in SES console
-
-4. **Alternative: Use SNS only (no attachments):**
-   - If you prefer to avoid SES setup, the solution will fall back to SNS
-   - SNS sends notifications without the HTML attachment
-   - The report is still saved to S3 and can be accessed there
-
-## Troubleshooting
-
-### SES Email Issues
-
-1. **"User not authorized to perform ses:SendRawEmail":**
-   - Ensure your email is verified in SES
-   - Check that you're using the correct AWS region for SES
-
-2. **"Email address not verified":**
-   ```bash
-   aws ses verify-email-identity --email-address your.email@example.com
-   ```
-
-3. **"MessageRejected: Email address not verified":**
-   - In SES Sandbox mode, both sender and recipient must be verified
-   - Consider requesting production access for unrestricted sending
