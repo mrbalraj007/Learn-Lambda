@@ -17,8 +17,7 @@ WARNING_THRESHOLD=60
 
 # Email notification settings
 SEND_EMAIL_NOTIFICATIONS=true
-#EMAIL_RECIPIENT="your-email@example.com"
-EMAIL_RECIPIENT="raj10ace@gmail.com"
+EMAIL_RECIPIENT="your-email@example.com"
 EMAIL_SUBJECT="AWS Certificate Expiration Alert"
 EMAIL_FROM="acm-alerts@your-domain.com"
 
