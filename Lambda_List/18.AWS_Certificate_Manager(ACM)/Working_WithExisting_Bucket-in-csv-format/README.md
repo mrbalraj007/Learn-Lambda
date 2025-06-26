@@ -14,6 +14,7 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
    - Uploads to S3 with timestamp in filename
    - Sends email notification with CSV attached (uses SES with SNS fallback)
 
+
 ## Deployment Instructions
 
 1. Deploy the CloudFormation template:
