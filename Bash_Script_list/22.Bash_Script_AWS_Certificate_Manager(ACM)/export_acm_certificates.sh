@@ -75,7 +75,7 @@ escape_csv() {
 
 # Get all certificates
 echo "Fetching certificates from ACM..."
-CERTIFICATES=$(aws acm list-certificates --include-deleted --query 'CertificateSummaryList[*].CertificateArn' --output text)
+CERTIFICATES=$(aws acm list-certificates --certificate-statuses ISSUED PENDING_VALIDATION EXPIRED FAILED INACTIVE VALIDATION_TIMED_OUT REVOKED --query 'CertificateSummaryList[*].CertificateArn' --output text)
 
 # Check if we got any certificates
 if [ -z "$CERTIFICATES" ]; then
