@@ -5,7 +5,7 @@
 # Usage: ./ec2_tags_export.sh [--region REGION]
 
 # Default settings
-REGION="us-east-1"
+REGION="ap-southeast-2"  # Default AWS region
 
 # Help function
 show_help() {
@@ -14,7 +14,7 @@ show_help() {
     echo "Auto-discovers and extracts all instance details and tags from EC2 instances and exports to CSV."
     echo ""
     echo "Options:"
-    echo "  --region REGION     AWS region (default: us-east-1)"
+    echo "  --region REGION     AWS region (default: ap-southeast-2)"
     echo "  --help              Show this help message and exit"
     echo ""
     echo "Examples:"
