@@ -53,9 +53,7 @@ process_bucket() {
     if [ $RESULT_CODE -ne 0 ]; then
         if [[ "$TAGS_RESULT" == *"NoSuchTagSet"* ]]; then
             echo "No tags found for bucket $bucket_name"
-            # Add a row with bucket name but no tags
-            ESCAPED_BUCKET=$(csv_escape "$bucket_name")
-            echo "${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
+            echo "Key,Value" > "$output_file"
             return 0
         else
             echo "Error retrieving tags for bucket $bucket_name: $TAGS_RESULT"
@@ -64,6 +62,8 @@ process_bucket() {
     fi
 
     # Process tags
+    echo "Key,Value" > "$output_file"
+
     # Process the tags based on available tools
     if $JQ_AVAILABLE; then
         # Using jq for better handling
@@ -73,53 +73,39 @@ process_bucket() {
             for TAG_KEY in "${TAG_KEY_ARRAY[@]}"; do
                 TAG_VALUE=$(echo "$TAGS_RESULT" | jq -r --arg tk "$TAG_KEY" '.TagSet[] | select(.Key == $tk) | .Value' 2>/dev/null)
                 if [[ -n "$TAG_VALUE" && "$TAG_VALUE" != "null" ]]; then
-                    ESCAPED_BUCKET=$(csv_escape "$bucket_name")
                     ESCAPED_KEY=$(csv_escape "$TAG_KEY")
                     ESCAPED_VALUE=$(csv_escape "$TAG_VALUE")
-                    echo "${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
+                    echo "${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
                 fi
             done
         else
             # Extract all tags
-            TAG_COUNT=$(echo "$TAGS_RESULT" | jq -r '.TagSet | length')
-            if [ "$TAG_COUNT" -eq 0 ]; then
-                # No tags - add a row indicating that
-                ESCAPED_BUCKET=$(csv_escape "$bucket_name")
-                echo "${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
-            else
-                while read -r pair; do
-                    if [[ -n "$pair" ]]; then
-                        KEY=$(echo "$pair" | jq -r '.Key')
-                        VALUE=$(echo "$pair" | jq -r '.Value')
-                        
-                        ESCAPED_BUCKET=$(csv_escape "$bucket_name")
-                        ESCAPED_KEY=$(csv_escape "$KEY")
-                        ESCAPED_VALUE=$(csv_escape "$VALUE")
-                        echo "${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
-                    fi
-                done < <(echo "$TAGS_RESULT" | jq -c '.TagSet[]')
-            fi
+            while read -r pair; do
+                if [[ -n "$pair" ]]; then
+                    KEY=$(echo "$pair" | jq -r '.Key')
+                    VALUE=$(echo "$pair" | jq -r '.Value')
+                    
+                    ESCAPED_KEY=$(csv_escape "$KEY")
+                    ESCAPED_VALUE=$(csv_escape "$VALUE")
+                    echo "${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
+                fi
+            done < <(echo "$TAGS_RESULT" | jq -c '.TagSet[]')
         fi
     else
         # Fallback to basic processing without jq
         # Extract tags using grep and sed
         TAGS=$(echo "$TAGS_RESULT" | grep -o '"Key": "[^"]*", "Value": "[^"]*"' | sed 's/"Key": "\([^"]*\)", "Value": "\([^"]*\)"/\1,\2/g')
         
-        if [[ -z "$TAGS" ]]; then
-            # No tags - add a row indicating that
-            ESCAPED_BUCKET=$(csv_escape "$bucket_name")
-            echo "${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
-        elif [[ -n "$TAG_KEYS" ]]; then
+        if [[ -n "$TAG_KEYS" ]]; then
             # Filter by specific tag keys
             IFS=',' read -ra TAG_KEY_ARRAY <<< "$TAG_KEYS"
             
             while IFS=',' read -r KEY VALUE; do
                 for TAG_KEY in "${TAG_KEY_ARRAY[@]}"; do
                     if [[ "$KEY" == "$TAG_KEY" ]]; then
-                        ESCAPED_BUCKET=$(csv_escape "$bucket_name")
                         ESCAPED_KEY=$(csv_escape "$KEY")
                         ESCAPED_VALUE=$(csv_escape "$VALUE")
-                        echo "${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
+                        echo "${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
                         break
                     fi
                 done
@@ -127,15 +113,14 @@ process_bucket() {
         else
             # Process all tags
             while IFS=',' read -r KEY VALUE; do
-                ESCAPED_BUCKET=$(csv_escape "$bucket_name")
                 ESCAPED_KEY=$(csv_escape "$KEY")
                 ESCAPED_VALUE=$(csv_escape "$VALUE")
-                echo "${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
+                echo "${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
             done <<< "$TAGS"
         fi
     fi
 
-    echo "Tags for bucket $bucket_name added to $output_file"
+    echo "Tags for bucket $bucket_name exported to $output_file"
     return 0
 }
 
@@ -184,10 +169,6 @@ if command -v jq &> /dev/null; then
     JQ_AVAILABLE=true
 fi
 
-# Create a single output file for all buckets
-OUTPUT_FILE="$OUTPUT_DIR/s3_buckets_tags.csv"
-echo "Bucket,Key,Value" > "$OUTPUT_FILE"
-
 # Process buckets
 if [ "$ALL_BUCKETS" = true ]; then
     echo "Listing all buckets in region $REGION..."
@@ -197,16 +178,18 @@ if [ "$ALL_BUCKETS" = true ]; then
         exit 1
     fi
     
-    # Process each bucket and append to single file
+    # Process each bucket
     for bucket in $BUCKETS; do
+        OUTPUT_FILE="$OUTPUT_DIR/${bucket}-tags.csv"
         process_bucket "$bucket" "$OUTPUT_FILE"
     done
 else
     # Process specified buckets
     IFS=',' read -ra BUCKET_ARRAY <<< "$BUCKET_NAMES"
     for bucket in "${BUCKET_ARRAY[@]}"; do
+        OUTPUT_FILE="$OUTPUT_DIR/${bucket}-tags.csv"
         process_bucket "$bucket" "$OUTPUT_FILE"
     done
 fi
 
-echo "Operation completed. All tag data has been exported to $OUTPUT_FILE"
+echo "Operation completed. All tag data has been exported to CSV files in $OUTPUT_DIR"
