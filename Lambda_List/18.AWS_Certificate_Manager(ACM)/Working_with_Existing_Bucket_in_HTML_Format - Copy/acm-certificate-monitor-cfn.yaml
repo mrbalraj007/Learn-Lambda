@@ -54,10 +54,6 @@ Resources:
                 Action:
                   - sns:Publish
                 Resource: !Ref ACMCertificateMonitorSNSTopic
-              - Effect: Allow
-                Action:
-                  - iam:ListAccountAliases
-                Resource: '*'
 
   ACMCertificateMonitorLambda:
     Type: AWS::Lambda::Function
@@ -75,13 +71,15 @@ Resources:
       Code:
         ZipFile: !Sub |
           import boto3
+          import csv
           import datetime
           import os
+          from io import StringIO
           from email.mime.multipart import MIMEMultipart
           from email.mime.text import MIMEText
           from email.mime.application import MIMEApplication
           
-          def generate_html_report(certificates_data, now, account_id, account_alias):
+          def generate_html_report(certificates_data, now):
               """Generate HTML report with color coding for certificate expiry status"""
               html = """
               <!DOCTYPE html>
@@ -101,19 +99,11 @@ Resources:
                       .timestamp { text-align: center; font-size: 0.8em; color: #666; margin-bottom: 20px; }
                       .summary { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
                       .summary h3 { margin-top: 0; color: #0066cc; }
-                      .account-info { margin: 20px 0; padding: 15px; border: 1px solid #0066cc; border-radius: 5px; background-color: #f0f7ff; }
-                      .account-info h3 { margin-top: 0; color: #0066cc; }
                   </style>
               </head>
               <body>
                   <h1>ACM Certificate Expiration Report</h1>
                   <div class="timestamp">Generated on: """ + datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC') + """</div>
-                  
-                  <div class="account-info">
-                      <h3>AWS Account Information</h3>
-                      <p>Account ID: <strong>""" + account_id + """</strong></p>
-                      <p>Account Name: <strong>""" + account_alias + """</strong></p>
-                  </div>
                   
                   <div class="summary">
                       <h3>Summary</h3>
@@ -197,20 +187,6 @@ Resources:
               s3_client = boto3.client('s3')
               sns_client = boto3.client('sns')
               ses_client = boto3.client('ses')
-              sts_client = boto3.client('sts')
-              iam_client = boto3.client('iam')
-              
-              # Get AWS account information
-              account_id = sts_client.get_caller_identity()['Account']
-              account_alias = "Default"  # Default value
-              try:
-                  # Try to get the account alias if it exists
-                  alias_response = iam_client.list_account_aliases()
-                  if alias_response['AccountAliases']:
-                      account_alias = alias_response['AccountAliases'][0]
-              except Exception as e:
-                  print(f"Error getting account alias: {str(e)}")
-                  # Continue with default alias if there's an error
               
               # Get environment variables
               bucket_name = os.environ['S3_BUCKET_NAME']
@@ -222,6 +198,11 @@ Resources:
               paginator = acm_client.get_paginator('list_certificates')
               for page in paginator.paginate():
                   certificates.extend(page['CertificateSummaryList'])
+              
+              # Prepare CSV data
+              csv_data = StringIO()
+              csv_writer = csv.writer(csv_data)
+              csv_writer.writerow(['Certificate ARN', 'Domain Name', 'Status', 'Type', 'Issued At', 'Not Before', 'Not After', 'Days to Expiry'])
               
               # Current time for calculation
               now = datetime.datetime.now(datetime.timezone.utc)
@@ -244,12 +225,12 @@ Resources:
                   if not_after != 'N/A':
                       days_to_expiry = (not_after - now).days
                   
-                  # Format dates for display
+                  # Format dates for CSV
                   issued_at_str = issued_at.strftime('%Y-%m-%d') if isinstance(issued_at, datetime.datetime) else issued_at
                   not_before_str = not_before.strftime('%Y-%m-%d') if isinstance(not_before, datetime.datetime) else not_before
                   not_after_str = not_after.strftime('%Y-%m-%d') if isinstance(not_after, datetime.datetime) else not_after
                   
-                  # Store for HTML report
+                  # Store for both CSV and HTML
                   certificates_data.append({
                       'cert_arn': cert['CertificateArn'],
                       'domain_name': domain_name,
@@ -260,15 +241,38 @@ Resources:
                       'not_after': not_after_str,
                       'days_to_expiry': days_to_expiry
                   })
+                  
+                  # Write to CSV
+                  csv_writer.writerow([
+                      cert['CertificateArn'],
+                      domain_name,
+                      status,
+                      cert_type,
+                      issued_at_str,
+                      not_before_str,
+                      not_after_str,
+                      days_to_expiry
+                  ])
+              
+              # Get the CSV data
+              csv_content = csv_data.getvalue()
               
               # Generate HTML report
-              html_content = generate_html_report(certificates_data, now, account_id, account_alias)
+              html_content = generate_html_report(certificates_data, now)
               
-              # Generate filename with date and time
+              # Generate filenames with date and time
               current_timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+              csv_file_name = f"acm_certificates_{current_timestamp}.csv"
               html_file_name = f"acm_certificates_{current_timestamp}.html"
               
-              # Upload file to S3
+              # Upload files to S3
+              s3_client.put_object(
+                  Bucket=bucket_name,
+                  Key=csv_file_name,
+                  Body=csv_content,
+                  ContentType='text/csv'
+              )
+              
               s3_client.put_object(
                   Bucket=bucket_name,
                   Key=html_file_name,
@@ -276,16 +280,21 @@ Resources:
                   ContentType='text/html'
               )
               
-              # Prepare email with HTML attachment using SES
+              # Prepare email with both CSV and HTML attachments using SES
               try:
                   # Create a multipart message
                   msg = MIMEMultipart()
-                  msg['Subject'] = f"Weekly ACM Certificate Report - Account: {account_alias} ({account_id})"
+                  msg['Subject'] = "Weekly ACM Certificate Report"
                   msg['From'] = "no-reply@aws.amazon.com"
                   msg['To'] = email_recipient
                   
                   # Add HTML message body
                   msg.attach(MIMEText(html_content, 'html'))
+                  
+                  # Add CSV attachment
+                  csv_attachment = MIMEApplication(csv_content, Name=csv_file_name)
+                  csv_attachment['Content-Disposition'] = f'attachment; filename="{csv_file_name}"'
+                  msg.attach(csv_attachment)
                   
                   # Add HTML attachment
                   html_attachment = MIMEApplication(html_content.encode('utf-8'), Name=html_file_name)
@@ -302,20 +311,21 @@ Resources:
               except Exception as e:
                   # Fallback to SNS if SES fails or isn't available
                   message = (
-                      f"ACM Certificate report has been generated and saved to S3:\n"
+                      f"ACM Certificate reports have been generated and saved to S3:\n"
+                      f"- CSV: s3://{bucket_name}/{csv_file_name}\n"
                       f"- HTML: s3://{bucket_name}/{html_file_name}\n\n"
-                      f"Error sending email with attachment: {str(e)}"
+                      f"Error sending email with attachments: {str(e)}"
                   )
                   sns_client.publish(
                       TopicArn=sns_topic_arn,
                       Message=message,
-                      Subject=f"Weekly ACM Certificate Report - Account: {account_alias} ({account_id})"
+                      Subject="Weekly ACM Certificate Report"
                   )
                   print(f"Falling back to SNS due to SES error: {str(e)}")
               
               return {
                   'statusCode': 200,
-                  'body': f"Report generated successfully and saved to S3: {html_file_name}"
+                  'body': f"Reports generated successfully and saved to S3: {csv_file_name} and {html_file_name}"
               }
 
   ACMCertificateMonitorScheduleRule:
@@ -336,16 +346,6 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ACMCertificateMonitorScheduleRule.Arn
 
-Outputs:
-  BucketName:
-    Description: Name of the S3 bucket storing ACM certificate reports
-    Value: !Ref ExistingBucketName
-  LambdaFunction:
-    Description: Name of the Lambda function
-    Value: !Ref ACMCertificateMonitorLambda
-  SNSTopic:
-    Description: ARN of the SNS topic
-    Value: !Ref ACMCertificateMonitorSNSTopic
 Outputs:
   BucketName:
     Description: Name of the S3 bucket storing ACM certificate reports

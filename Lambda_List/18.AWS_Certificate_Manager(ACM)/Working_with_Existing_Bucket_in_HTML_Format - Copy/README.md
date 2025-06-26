@@ -1,6 +1,6 @@
 # ACM Certificate Monitoring Solution
 
-This solution automatically monitors AWS Certificate Manager (ACM) certificates, generates weekly HTML reports, stores them in an S3 bucket with timestamps, and sends an email notification with the report attached.
+This solution automatically monitors AWS Certificate Manager (ACM) certificates, generates weekly reports in both CSV and HTML formats, stores them in an S3 bucket with timestamps, and sends an email notification with both reports attached.
 
 ## Components
 
@@ -9,15 +9,14 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
    - Uses your existing S3 bucket
 
 2. **Lambda Function (`lambda_function.py`)**:
-   - Retrieves AWS account ID and name information
    - Queries ACM for certificate information
-   - Generates HTML report with account information
+   - Generates reports in both CSV and HTML formats
    - The HTML report features color-coding:
      - 🟢 Green: Valid certificates
      - 🟡 Yellow: Certificates expiring within 30 days
      - 🔴 Red: Expired certificates
-   - Uploads report to S3 with timestamp in filename
-   - Sends email notification with HTML report attached (uses SES with SNS fallback)
+   - Uploads reports to S3 with timestamp in filenames
+   - Sends email notification with both reports attached (uses SES with SNS fallback)
 
 ## Deployment Instructions
 
@@ -37,16 +36,15 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
 ## Features
 
 - Lists all ACM certificates in your account
-- Displays AWS account ID and account name
 - Reports certificate details including expiration dates
 - Calculates days remaining until expiration
-- Creates HTML report with:
-  - Account information
+- Creates reports in both CSV and HTML formats
+- HTML report includes:
   - Color-coded expiration status
   - Summary statistics 
   - Attractive, easy-to-read table layout
-- Creates timestamped report file
-- Sends email notification with HTML report attached
+- Creates timestamped report files
+- Sends email notifications with both reports attached
 - Runs weekly (every Monday at midnight)
 - Uses your existing S3 bucket
 
@@ -62,3 +60,5 @@ This solution automatically monitors AWS Certificate Manager (ACM) certificates,
 - An existing S3 bucket
 - SES configuration may be required for sending emails with attachments
 - Appropriate IAM permissions to create CloudFormation stacks with IAM resources
+
+.
