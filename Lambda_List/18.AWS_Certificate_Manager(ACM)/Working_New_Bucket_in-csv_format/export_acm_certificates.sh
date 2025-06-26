@@ -155,3 +155,4 @@ done
 
 echo "Certificate details exported to $OUTPUT_FILE"
 echo "Total certificates processed: $PROCESSED_CERTS"
+
