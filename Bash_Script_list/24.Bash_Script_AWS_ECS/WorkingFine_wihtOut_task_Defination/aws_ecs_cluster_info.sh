@@ -43,8 +43,8 @@ escape_csv() {
 collect_ecs_details() {
     echo "Retrieving ECS clusters in ${AWS_REGION}..."
     
-    # Create CSV header with added task definition columns
-    echo "Cluster Name,Service Name,Task Count,Container Instance Count,Infrastructure Type,Namespace,Status,Task Definition,Task Definition Revision,CPU,Memory" > ${CSV_FILE}
+    # Create CSV header
+    echo "Cluster Name,Service Name,Task Count,Container Instance Count,Infrastructure Type,Namespace,Status" > ${CSV_FILE}
     
     # Get list of all ECS clusters
     local clusters=$(aws ecs list-clusters --query 'clusterArns[]' --output text)
@@ -109,7 +109,7 @@ collect_ecs_details() {
         if [ ${#services[@]} -eq 0 ]; then
             # No services in this cluster
             echo "No services found in cluster ${cluster_name}"
-            echo "$(escape_csv "$cluster_name"),No Services,0,${container_instance_count},${infrastructure_type},None,${cluster_status},None,None,None,None" >> ${CSV_FILE}
+            echo "$(escape_csv "$cluster_name"),No Services,0,${container_instance_count},${infrastructure_type},None,${cluster_status}" >> ${CSV_FILE}
         else
             # Process each service
             for service_arn in "${services[@]}"; do
@@ -154,48 +154,8 @@ collect_ecs_details() {
                     fi
                 fi
                 
-                # Get task definition information
-                local task_def_arn=$(echo $service_details | jq -r '.services[0].taskDefinition')
-                local task_def_name="None"
-                local task_def_revision="None"
-                local task_def_cpu="None"
-                local task_def_memory="None"
-                
-                if [ ! -z "$task_def_arn" ] && [ "$task_def_arn" != "null" ]; then
-                    echo "    Fetching task definition details..."
-                    # Get task definition details
-                    local task_def_details=$(aws ecs describe-task-definition --task-definition $task_def_arn)
-                    
-                    # Extract task definition name (without :revision)
-                    task_def_name=$(echo $task_def_arn | awk -F'/' '{print $2}' | awk -F':' '{print $1}')
-                    
-                    # Extract revision
-                    task_def_revision=$(echo $task_def_arn | awk -F':' '{print $2}')
-                    
-                    # Extract CPU and memory
-                    task_def_cpu=$(echo $task_def_details | jq -r '.taskDefinition.cpu // "Not Specified"')
-                    task_def_memory=$(echo $task_def_details | jq -r '.taskDefinition.memory // "Not Specified"')
-                    
-                    # If CPU/memory are at container level instead of task level
-                    if [ "$task_def_cpu" == "null" ] || [ "$task_def_cpu" == "Not Specified" ]; then
-                        # Try to get from container definitions (taking first container as representative)
-                        local container_cpu=$(echo $task_def_details | jq -r '.taskDefinition.containerDefinitions[0].cpu // "Not Specified"')
-                        if [ "$container_cpu" != "null" ] && [ "$container_cpu" != "Not Specified" ]; then
-                            task_def_cpu="${container_cpu} (container)"
-                        fi
-                    fi
-                    
-                    if [ "$task_def_memory" == "null" ] || [ "$task_def_memory" == "Not Specified" ]; then
-                        # Try to get from container definitions
-                        local container_memory=$(echo $task_def_details | jq -r '.taskDefinition.containerDefinitions[0].memory // "Not Specified"')
-                        if [ "$container_memory" != "null" ] && [ "$container_memory" != "Not Specified" ]; then
-                            task_def_memory="${container_memory} (container)"
-                        fi
-                    fi
-                fi
-                
                 # Write to CSV - escape commas in fields
-                echo "$(escape_csv "$cluster_name"),$(escape_csv "$service_name"),${task_count},${container_instance_count},${infrastructure_type},$(escape_csv "$namespace"),${service_status},$(escape_csv "$task_def_name"),${task_def_revision},${task_def_cpu},${task_def_memory}" >> ${CSV_FILE}
+                echo "$(escape_csv "$cluster_name"),$(escape_csv "$service_name"),${task_count},${container_instance_count},${infrastructure_type},$(escape_csv "$namespace"),${service_status}" >> ${CSV_FILE}
             done
         fi
         
