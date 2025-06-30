@@ -36,7 +36,7 @@ source venv/bin/activate
 First, run the main export script to gather all load balancer information:
 
 ```bash
-./export-aws-loadbalancer.sh
+./Export-aws-loadbalancer.sh
 ```
 
 This will:
