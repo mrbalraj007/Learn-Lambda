@@ -58,21 +58,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get AWS account information
-echo "Fetching AWS account information..."
-ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text 2>/dev/null || echo "N/A")
-ACCOUNT_NAME=$(aws iam list-account-aliases --query 'AccountAliases[0]' --output text 2>/dev/null || echo "N/A")
-
-if [ "$ACCOUNT_NAME" = "None" ] || [ -z "$ACCOUNT_NAME" ]; then
-    ACCOUNT_NAME="N/A"
-fi
-
-echo "Account ID: $ACCOUNT_ID"
-echo "Account Name: $ACCOUNT_NAME"
-
-# Create timestamp for file naming with account ID
+# Create timestamp for file naming
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-OUTPUT_FILE="ec2_details_tags_${ACCOUNT_ID}_${TIMESTAMP}.csv"
+OUTPUT_FILE="ec2_details_tags_${TIMESTAMP}.csv"
 
 # Get AWS account information
 echo "Fetching AWS account information..."
@@ -102,7 +90,7 @@ echo "Discovering all unique tags across instances..."
 ALL_TAGS=$(echo "$INSTANCES_JSON" | jq -r '.Reservations[].Instances[].Tags[]?.Key' | sort -u)
 
 # Create header row for CSV with instance details and tags
-HEADER="InstanceId,InstanceName,PublicIP,PrivateIP,InstanceType,AvailabilityZone,AlarmStatus,ElasticIP,SecurityGroupName,KeyName,LaunchTime,PlatformDetails"
+HEADER="AccountID,AccountName,InstanceId,InstanceName,PublicIP,PrivateIP,InstanceType,AvailabilityZone,AlarmStatus,ElasticIP,SecurityGroupName,KeyName,LaunchTime,PlatformDetails"
 
 # Add all tag keys to header
 for tag in $ALL_TAGS; do
@@ -151,7 +139,7 @@ echo "$INSTANCES_JSON" | jq -c '.Reservations[].Instances[]' | while read -r ins
     fi
     
     # Start building the CSV line with instance details
-    LINE="${instance_id},\"${instance_name//\"/\"\"}\",\"${public_ip}\",\"${private_ip}\",\"${instance_type}\",\"${availability_zone}\",\"${alarm_status}\",\"${elastic_ip}\",\"${security_group_names//\"/\"\"}\",\"${key_name//\"/\"\"}\",\"${launch_time}\",\"${platform_details//\"/\"\"}\""
+    LINE="\"${ACCOUNT_ID}\",\"${ACCOUNT_NAME//\"/\"\"}\",${instance_id},\"${instance_name//\"/\"\"}\",\"${public_ip}\",\"${private_ip}\",\"${instance_type}\",\"${availability_zone}\",\"${alarm_status}\",\"${elastic_ip}\",\"${security_group_names//\"/\"\"}\",\"${key_name//\"/\"\"}\",\"${launch_time}\",\"${platform_details//\"/\"\"}\""
     
     # Process each discovered tag (except Name which we already handled)
     for tag in $ALL_TAGS; do
