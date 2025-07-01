@@ -1,246 +1,142 @@
 #!/bin/bash
+# filepath: c:\MY_DevOps_Journey\Learn-Lambda\Bash_Script_list\25.Bash_Script_AWS_S3\Working_For_Hosted_Zones\export_route53_info.sh
 
-#==============================================================================
-# Script Name: export_route53_info.sh
-# Description: Export all Route 53 hosted zones information to CSV file
-# Author: AWS DevOps Engineer
-# Date: $(date +"%Y-%m-%d")
-# Version: 1.0
-# 
-# This script exports the following Route 53 information:
-# - Hosted Zone Name
-# - Type (Public/Private)
-# - Created By (Caller Reference)
-# - Record Count
-# - Description
-# - Hosted Zone ID
-#==============================================================================
+# AWS Route 53 Hosted Zones Information Export Script
+# Description: Exports all Route 53 hosted zone details to CSV format
 
-# Set default AWS region
-export AWS_DEFAULT_REGION="ap-southeast-2"
+set -e  # Exit on any error
 
-# Color codes for output formatting
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Configuration
+AWS_REGION="ap-southeast-2"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+OUTPUT_DIR="$(dirname "$0")"
+CSV_FILE="${OUTPUT_DIR}/route53_hosted_zones_${TIMESTAMP}.csv"
+LOG_FILE="${OUTPUT_DIR}/export_log_${TIMESTAMP}.log"
 
-# Function to print colored output
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+# Function to log messages
+log_message() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-# Function to check if AWS CLI is installed and configured
+# Function to check AWS CLI availability
 check_aws_cli() {
-    print_status "Checking AWS CLI installation and configuration..."
-    
     if ! command -v aws &> /dev/null; then
-        print_error "AWS CLI is not installed. Please install AWS CLI first."
+        log_message "ERROR: AWS CLI is not installed or not in PATH"
         exit 1
     fi
-    
-    if ! aws sts get-caller-identity &> /dev/null; then
-        print_error "AWS CLI is not configured or credentials are invalid."
-        print_error "Please run 'aws configure' to set up your credentials."
+}
+
+# Function to check AWS credentials
+check_aws_credentials() {
+    if ! aws sts get-caller-identity --region "$AWS_REGION" &> /dev/null; then
+        log_message "ERROR: AWS credentials not configured or invalid"
         exit 1
     fi
-    
-    print_success "AWS CLI is properly configured"
 }
 
-# Function to create output directory if it doesn't exist
-create_output_dir() {
-    OUTPUT_DIR="route53_exports"
-    if [ ! -d "$OUTPUT_DIR" ]; then
-        mkdir -p "$OUTPUT_DIR"
-        print_status "Created output directory: $OUTPUT_DIR"
-    fi
-}
-
-# Function to generate CSV filename with timestamp
-generate_filename() {
-    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    CSV_FILENAME="route53_exports/route53_hosted_zones_${TIMESTAMP}.csv"
-    echo "$CSV_FILENAME"
-}
-
-# Function to write CSV header
-write_csv_header() {
-    local filename=$1
-    echo "Hosted Zone Name,Type,Created By,Record Count,Description,Hosted Zone ID,Export Date" > "$filename"
-    print_status "CSV header written to $filename"
-}
-
-# Function to get hosted zone type
-get_zone_type() {
-    local zone_id=$1
-    local vpc_info
+# Function to get hosted zone details
+get_hosted_zone_details() {
+    local zone_id="$1"
+    local zone_name="$2"
     
-    vpc_info=$(aws route53 get-hosted-zone --id "$zone_id" --query 'VPCs' --output text 2>/dev/null)
+    # Get hosted zone details
+    local zone_details=$(aws route53 get-hosted-zone --id "$zone_id" --region "$AWS_REGION" 2>/dev/null)
     
-    if [ "$vpc_info" == "None" ] || [ -z "$vpc_info" ]; then
-        echo "Public"
-    else
-        echo "Private"
-    fi
-}
-
-# Function to get record count for a hosted zone
-get_record_count() {
-    local zone_id=$1
-    local count
-    
-    count=$(aws route53 list-resource-record-sets --hosted-zone-id "$zone_id" --query 'length(ResourceRecordSets)' --output text 2>/dev/null)
-    
-    if [ -z "$count" ] || [ "$count" == "None" ]; then
-        echo "0"
-    else
-        echo "$count"
-    fi
-}
-
-# Function to clean and escape CSV data
-clean_csv_data() {
-    local data="$1"
-    # Remove newlines and carriage returns, escape quotes
-    echo "$data" | tr -d '\n\r' | sed 's/"/""/g'
-}
-
-# Main function to export Route 53 information
-export_route53_info() {
-    local csv_file=$1
-    local zone_count=0
-    local processed_count=0
-    
-    print_status "Fetching Route 53 hosted zones information..."
-    
-    # Get all hosted zones
-    local hosted_zones
-    hosted_zones=$(aws route53 list-hosted-zones --query 'HostedZones[*].[Id,Name,CallerReference,Config.Comment]' --output text 2>/dev/null)
-    
-    if [ $? -ne 0 ] || [ -z "$hosted_zones" ]; then
-        print_error "Failed to retrieve hosted zones. Please check your AWS permissions."
-        exit 1
-    fi
-    
-    zone_count=$(echo "$hosted_zones" | wc -l)
-    print_status "Found $zone_count hosted zone(s) to process"
-    
-    # Process each hosted zone
-    while IFS=$'\t' read -r zone_id zone_name caller_ref description; do
-        if [ -z "$zone_id" ]; then
-            continue
+    if [ $? -eq 0 ]; then
+        # Extract information from the response
+        local created_date=$(echo "$zone_details" | jq -r '.HostedZone.Config.Comment // "N/A"')
+        local description=$(echo "$zone_details" | jq -r '.HostedZone.Config.Comment // "N/A"')
+        local private_zone=$(echo "$zone_details" | jq -r '.HostedZone.Config.PrivateZone')
+        local zone_type="Public"
+        
+        if [ "$private_zone" = "true" ]; then
+            zone_type="Private"
         fi
-        
-        processed_count=$((processed_count + 1))
-        print_status "Processing zone $processed_count/$zone_count: $zone_name"
-        
-        # Clean the zone ID (remove /hostedzone/ prefix)
-        clean_zone_id=$(echo "$zone_id" | sed 's|/hostedzone/||')
-        
-        # Get zone type
-        zone_type=$(get_zone_type "$clean_zone_id")
         
         # Get record count
-        record_count=$(get_record_count "$clean_zone_id")
+        local record_count=$(aws route53 list-resource-record-sets --hosted-zone-id "$zone_id" --region "$AWS_REGION" --query 'length(ResourceRecordSets)' --output text 2>/dev/null || echo "0")
         
-        # Clean data for CSV
-        clean_zone_name=$(clean_csv_data "$zone_name")
-        clean_caller_ref=$(clean_csv_data "$caller_ref")
-        clean_description=$(clean_csv_data "$description")
+        # Get creation date from hosted zone details
+        local creation_date=$(echo "$zone_details" | jq -r '.HostedZone.CreatedDate // "N/A"')
         
-        # Replace empty description with N/A
-        if [ -z "$clean_description" ] || [ "$clean_description" == "None" ]; then
-            clean_description="N/A"
-        fi
+        # Try to get creator information (this might not be available)
+        local created_by="N/A"
         
-        # Get current date and time
-        export_date=$(date +"%Y-%m-%d %H:%M:%S")
+        # Clean zone name (remove trailing dot)
+        zone_name=$(echo "$zone_name" | sed 's/\.$//')
         
-        # Write to CSV
-        echo "\"$clean_zone_name\",\"$zone_type\",\"$clean_caller_ref\",\"$record_count\",\"$clean_description\",\"$clean_zone_id\",\"$export_date\"" >> "$csv_file"
-        
-    done <<< "$hosted_zones"
-    
-    print_success "Processed $processed_count hosted zone(s)"
-}
-
-# Function to display summary
-display_summary() {
-    local csv_file=$1
-    local record_count
-    
-    if [ -f "$csv_file" ]; then
-        record_count=$(($(wc -l < "$csv_file") - 1)) # Subtract header row
-        print_success "Export completed successfully!"
-        echo
-        echo "=== EXPORT SUMMARY ==="
-        echo "Output file: $csv_file"
-        echo "Total records exported: $record_count"
-        echo "Export date: $(date +"%Y-%m-%d %H:%M:%S")"
-        echo "AWS Region: $AWS_DEFAULT_REGION"
-        echo
-        
-        if [ $record_count -gt 0 ]; then
-            print_status "Sample of exported data:"
-            echo "========================"
-            head -n 3 "$csv_file" | column -t -s ','
-            echo "========================"
-        fi
+        # Output CSV row
+        echo "\"$zone_name\",\"$zone_type\",\"$created_by\",\"$record_count\",\"$description\",\"$zone_id\",\"$creation_date\""
     else
-        print_error "Export failed - output file not found"
-        exit 1
+        log_message "WARNING: Failed to get details for hosted zone: $zone_id"
+        echo "\"$zone_name\",\"N/A\",\"N/A\",\"N/A\",\"N/A\",\"$zone_id\",\"N/A\""
     fi
 }
 
-# Main execution
+# Main function
 main() {
-    echo "==================================================================="
-    echo "              AWS Route 53 Information Export Tool"
-    echo "==================================================================="
-    echo "Region: $AWS_DEFAULT_REGION"
-    echo "Start time: $(date +"%Y-%m-%d %H:%M:%S")"
-    echo "==================================================================="
-    echo
+    log_message "Starting Route 53 hosted zones export..."
     
     # Check prerequisites
     check_aws_cli
+    check_aws_credentials
     
-    # Create output directory
-    create_output_dir
+    log_message "Using AWS Region: $AWS_REGION"
+    log_message "Output file: $CSV_FILE"
     
-    # Generate filename
-    CSV_FILE=$(generate_filename)
+    # Create CSV header
+    echo "Hosted Zone Name,Type,Created By,Record Count,Description,Hosted Zone ID,Creation Date" > "$CSV_FILE"
     
-    # Write CSV header
-    write_csv_header "$CSV_FILE"
+    # Get all hosted zones
+    log_message "Retrieving hosted zones list..."
+    local hosted_zones=$(aws route53 list-hosted-zones --region "$AWS_REGION" --output json 2>/dev/null)
     
-    # Export Route 53 information
-    export_route53_info "$CSV_FILE"
+    if [ $? -ne 0 ]; then
+        log_message "ERROR: Failed to retrieve hosted zones"
+        exit 1
+    fi
+    
+    # Check if jq is available
+    if ! command -v jq &> /dev/null; then
+        log_message "ERROR: jq is required but not installed"
+        exit 1
+    fi
+    
+    # Extract hosted zones and process each one
+    local zone_count=$(echo "$hosted_zones" | jq '.HostedZones | length')
+    log_message "Found $zone_count hosted zones"
+    
+    if [ "$zone_count" -eq 0 ]; then
+        log_message "No hosted zones found in the account for region $AWS_REGION"
+        exit 0
+    fi
+    
+    # Process each hosted zone
+    for i in $(seq 0 $((zone_count - 1))); do
+        local zone_id=$(echo "$hosted_zones" | jq -r ".HostedZones[$i].Id" | sed 's|/hostedzone/||')
+        local zone_name=$(echo "$hosted_zones" | jq -r ".HostedZones[$i].Name")
+        
+        log_message "Processing hosted zone: $zone_name ($zone_id)"
+        
+        # Get detailed information and append to CSV
+        get_hosted_zone_details "$zone_id" "$zone_name" >> "$CSV_FILE"
+    done
+    
+    log_message "Export completed successfully!"
+    log_message "CSV file saved as: $CSV_FILE"
+    log_message "Total hosted zones processed: $zone_count"
     
     # Display summary
-    display_summary "$CSV_FILE"
-    
-    echo "==================================================================="
-    echo "Export completed at: $(date +"%Y-%m-%d %H:%M:%S")"
-    echo "==================================================================="
+    echo ""
+    echo "========================================="
+    echo "Route 53 Export Summary"
+    echo "========================================="
+    echo "Region: $AWS_REGION"
+    echo "Total Hosted Zones: $zone_count"
+    echo "Output File: $CSV_FILE"
+    echo "Log File: $LOG_FILE"
+    echo "========================================="
 }
-
-# Trap to handle script interruption
-trap 'print_error "Script interrupted by user"; exit 1' INT TERM
 
 # Execute main function
 main "$@"
