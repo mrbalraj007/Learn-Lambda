@@ -33,15 +33,15 @@ get_account_info() {
     local account_id
     account_id=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null)
     if [ $? -eq 0 ] && [ -n "$account_id" ]; then
-        echo "AWS-Account-${account_id}"
+        echo "${account_id}"
     else
-        echo "Unknown-Account"
+        echo "Unknown"
     fi
 }
 
 # Function to get current timestamp
 get_timestamp() {
-    date '+%Y-%m-%d %H:%M:%S'
+    date '+%Y%m%d_%H%M%S'
 }
 
 # Function to properly format CSV values
@@ -60,8 +60,6 @@ csv_escape() {
 process_bucket() {
     local bucket_name="$1"
     local output_file="$2"
-    local account_display_name="$3"
-    local timestamp="$4"
     
     echo "Retrieving tags for bucket: $bucket_name in region: $REGION"
     TAGS_RESULT=$(aws s3api get-bucket-tagging --bucket "$bucket_name" --region "$REGION" 2>&1)
@@ -73,9 +71,7 @@ process_bucket() {
             echo "No tags found for bucket $bucket_name"
             # Add a row with bucket name but no tags
             ESCAPED_BUCKET=$(csv_escape "$bucket_name")
-            ESCAPED_ACCOUNT=$(csv_escape "$account_display_name")
-            ESCAPED_TIMESTAMP=$(csv_escape "$timestamp")
-            echo "${ESCAPED_ACCOUNT},${ESCAPED_TIMESTAMP},${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
+            echo "${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
             return 0
         else
             echo "Error retrieving tags for bucket $bucket_name: $TAGS_RESULT"
@@ -96,9 +92,7 @@ process_bucket() {
                     ESCAPED_BUCKET=$(csv_escape "$bucket_name")
                     ESCAPED_KEY=$(csv_escape "$TAG_KEY")
                     ESCAPED_VALUE=$(csv_escape "$TAG_VALUE")
-                    ESCAPED_ACCOUNT=$(csv_escape "$account_display_name")
-                    ESCAPED_TIMESTAMP=$(csv_escape "$timestamp")
-                    echo "${ESCAPED_ACCOUNT},${ESCAPED_TIMESTAMP},${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
+                    echo "${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
                 fi
             done
         else
@@ -107,9 +101,7 @@ process_bucket() {
             if [ "$TAG_COUNT" -eq 0 ]; then
                 # No tags - add a row indicating that
                 ESCAPED_BUCKET=$(csv_escape "$bucket_name")
-                ESCAPED_ACCOUNT=$(csv_escape "$account_display_name")
-                ESCAPED_TIMESTAMP=$(csv_escape "$timestamp")
-                echo "${ESCAPED_ACCOUNT},${ESCAPED_TIMESTAMP},${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
+                echo "${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
             else
                 while read -r pair; do
                     if [[ -n "$pair" ]]; then
@@ -119,9 +111,7 @@ process_bucket() {
                         ESCAPED_BUCKET=$(csv_escape "$bucket_name")
                         ESCAPED_KEY=$(csv_escape "$KEY")
                         ESCAPED_VALUE=$(csv_escape "$VALUE")
-                        ESCAPED_ACCOUNT=$(csv_escape "$account_display_name")
-                        ESCAPED_TIMESTAMP=$(csv_escape "$timestamp")
-                        echo "${ESCAPED_ACCOUNT},${ESCAPED_TIMESTAMP},${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
+                        echo "${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
                     fi
                 done < <(echo "$TAGS_RESULT" | jq -c '.TagSet[]')
             fi
@@ -134,9 +124,7 @@ process_bucket() {
         if [[ -z "$TAGS" ]]; then
             # No tags - add a row indicating that
             ESCAPED_BUCKET=$(csv_escape "$bucket_name")
-            ESCAPED_ACCOUNT=$(csv_escape "$account_display_name")
-            ESCAPED_TIMESTAMP=$(csv_escape "$timestamp")
-            echo "${ESCAPED_ACCOUNT},${ESCAPED_TIMESTAMP},${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
+            echo "${ESCAPED_BUCKET},No tags,No tags" >> "$output_file"
         elif [[ -n "$TAG_KEYS" ]]; then
             # Filter by specific tag keys
             IFS=',' read -ra TAG_KEY_ARRAY <<< "$TAG_KEYS"
@@ -147,9 +135,7 @@ process_bucket() {
                         ESCAPED_BUCKET=$(csv_escape "$bucket_name")
                         ESCAPED_KEY=$(csv_escape "$KEY")
                         ESCAPED_VALUE=$(csv_escape "$VALUE")
-                        ESCAPED_ACCOUNT=$(csv_escape "$account_display_name")
-                        ESCAPED_TIMESTAMP=$(csv_escape "$timestamp")
-                        echo "${ESCAPED_ACCOUNT},${ESCAPED_TIMESTAMP},${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
+                        echo "${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
                         break
                     fi
                 done
@@ -160,9 +146,7 @@ process_bucket() {
                 ESCAPED_BUCKET=$(csv_escape "$bucket_name")
                 ESCAPED_KEY=$(csv_escape "$KEY")
                 ESCAPED_VALUE=$(csv_escape "$VALUE")
-                ESCAPED_ACCOUNT=$(csv_escape "$account_display_name")
-                ESCAPED_TIMESTAMP=$(csv_escape "$timestamp")
-                echo "${ESCAPED_ACCOUNT},${ESCAPED_TIMESTAMP},${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
+                echo "${ESCAPED_BUCKET},${ESCAPED_KEY},${ESCAPED_VALUE}" >> "$output_file"
             done <<< "$TAGS"
         fi
     fi
@@ -217,12 +201,12 @@ if command -v jq &> /dev/null; then
 fi
 
 # Get account information and timestamp
-ACCOUNT_DISPLAY_NAME=$(get_account_info)
+ACCOUNT_ID=$(get_account_info)
 TIMESTAMP=$(get_timestamp)
 
-# Create a single output file for all buckets
-OUTPUT_FILE="$OUTPUT_DIR/s3_buckets_tags.csv"
-echo "Account,DateTime,Bucket,Key,Value" > "$OUTPUT_FILE"
+# Create a single output file for all buckets with account ID in filename
+OUTPUT_FILE="$OUTPUT_DIR/s3_buckets_tags_${ACCOUNT_ID}_${TIMESTAMP}.csv"
+echo "Bucket,Key,Value" > "$OUTPUT_FILE"
 
 # Process buckets
 if [ "$ALL_BUCKETS" = true ]; then
@@ -235,13 +219,13 @@ if [ "$ALL_BUCKETS" = true ]; then
     
     # Process each bucket and append to single file
     for bucket in $BUCKETS; do
-        process_bucket "$bucket" "$OUTPUT_FILE" "$ACCOUNT_DISPLAY_NAME" "$TIMESTAMP"
+        process_bucket "$bucket" "$OUTPUT_FILE"
     done
 else
     # Process specified buckets
     IFS=',' read -ra BUCKET_ARRAY <<< "$BUCKET_NAMES"
     for bucket in "${BUCKET_ARRAY[@]}"; do
-        process_bucket "$bucket" "$OUTPUT_FILE" "$ACCOUNT_DISPLAY_NAME" "$TIMESTAMP"
+        process_bucket "$bucket" "$OUTPUT_FILE"
     done
 fi
 
