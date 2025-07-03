@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Auto-tag EC2 snapshots using Lambda (S3-based deployment)
+
+Parameters:
+  LambdaS3Bucket:
+    Type: String
+    Description: Name of the S3 bucket containing the Lambda ZIP file
+
+  LambdaS3Key:
+    Type: String
+    Description: Path to the Lambda ZIP file in the S3 bucket
+
+Resources:
+
+  SnapshotTagLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SnapshotTagLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EC2SnapshotTaggingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeInstances
+                  - ec2:CreateTags
+                Resource: "*"
+
+  SnapshotTagLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SnapshotTagger
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt SnapshotTagLambdaRole.Arn
+      Timeout: 60
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+
+  SnapshotEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: TagSnapshotsOnCreate
+      Description: "Triggers Lambda when a snapshot is created"
+      EventPattern:
+        source:
+          - "aws.ec2"
+        detail-type:
+          - "EBS Snapshot Notification"
+        detail:
+          event:
+            - "createSnapshot"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt SnapshotTagLambdaFunction.Arn
+          Id: "SnapshotTaggerTarget"
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SnapshotTagLambdaFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt SnapshotEventRule.Arn
+
+Outputs:
+  LambdaFunctionName:
+    Description: Lambda function that tags snapshots
+    Value: !Ref SnapshotTagLambdaFunction

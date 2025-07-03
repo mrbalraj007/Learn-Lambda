@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Auto-tag EBS volumes with EC2 instance tags every 5 minutes'
+
+Parameters:
+  LambdaFunctionName:
+    Type: String
+    Default: ebs-auto-tagger
+    Description: Name for the Lambda function
+  
+  ScheduleExpression:
+    Type: String
+    Default: 'rate(5 minutes)'
+    Description: EventBridge schedule expression
+
+Resources:
+  # IAM Role for Lambda function
+  EBSAutoTaggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${LambdaFunctionName}-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EBSAutoTaggerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeTags
+                  - ec2:CreateTags
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # Lambda function
+  EBSAutoTaggerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt EBSAutoTaggerRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+          from datetime import datetime
+          from botocore.exceptions import ClientError
+
+          # Configure logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              """
+              Main Lambda handler to auto-tag EBS volumes with EC2 instance tags
+              """
+              ec2_client = boto3.client('ec2')
+              
+              try:
+                  # Initialize report
+                  report = {
+                      'timestamp': datetime.utcnow().isoformat(),
+                      'total_instances_processed': 0,
+                      'total_volumes_tagged': 0,
+                      'errors': [],
+                      'details': []
+                  }
+                  
+                  # Get all running EC2 instances
+                  instances_response = ec2_client.describe_instances(
+                      Filters=[
+                          {
+                              'Name': 'instance-state-name',
+                              'Values': ['running', 'stopped']
+                          }
+                      ]
+                  )
+                  
+                  for reservation in instances_response['Reservations']:
+                      for instance in reservation['Instances']:
+                          instance_id = instance['InstanceId']
+                          report['total_instances_processed'] += 1
+                          
+                          try:
+                              # Process each instance
+                              volumes_tagged = process_instance(ec2_client, instance, report)
+                              report['total_volumes_tagged'] += volumes_tagged
+                              
+                          except Exception as e:
+                              error_msg = f"Error processing instance {instance_id}: {str(e)}"
+                              logger.error(error_msg)
+                              report['errors'].append(error_msg)
+                  
+                  # Log final report
+                  logger.info(f"EBS Auto-Tagging Report: {json.dumps(report, indent=2)}")
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps(report)
+                  }
+                  
+              except Exception as e:
+                  error_msg = f"Critical error in lambda_handler: {str(e)}"
+                  logger.error(error_msg)
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps({'error': error_msg})
+                  }
+
+          def process_instance(ec2_client, instance, report):
+              """
+              Process a single EC2 instance and tag its EBS volumes
+              """
+              instance_id = instance['InstanceId']
+              volumes_tagged = 0
+              
+              # Get instance tags
+              instance_tags = {tag['Key']: tag['Value'] for tag in instance.get('Tags', [])}
+              
+              # Skip if no tags on instance
+              if not instance_tags:
+                  logger.info(f"Instance {instance_id} has no tags, skipping")
+                  return 0
+              
+              # Filter out AWS system tags
+              filtered_tags = {k: v for k, v in instance_tags.items() 
+                             if not k.startswith('aws:')}
+              
+              if not filtered_tags:
+                  logger.info(f"Instance {instance_id} has only AWS system tags, skipping")
+                  return 0
+              
+              instance_detail = {
+                  'instance_id': instance_id,
+                  'instance_tags': filtered_tags,
+                  'volumes_processed': []
+              }
+              
+              # Get attached EBS volumes
+              for block_device in instance.get('BlockDeviceMappings', []):
+                  if 'Ebs' in block_device:
+                      volume_id = block_device['Ebs']['VolumeId']
+                      
+                      try:
+                          # Get current volume tags
+                          volume_tags = get_volume_tags(ec2_client, volume_id)
+                          
+                          # Determine tags to add
+                          tags_to_add = get_tags_to_add(filtered_tags, volume_tags)
+                          
+                          if tags_to_add:
+                              # Apply tags to volume
+                              apply_tags_to_volume(ec2_client, volume_id, tags_to_add)
+                              volumes_tagged += 1
+                              
+                              volume_detail = {
+                                  'volume_id': volume_id,
+                                  'tags_added': tags_to_add,
+                                  'status': 'success'
+                              }
+                          else:
+                              volume_detail = {
+                                  'volume_id': volume_id,
+                                  'tags_added': {},
+                                  'status': 'no_changes_needed'
+                              }
+                          
+                          instance_detail['volumes_processed'].append(volume_detail)
+                          
+                      except Exception as e:
+                          error_msg = f"Error processing volume {volume_id}: {str(e)}"
+                          logger.error(error_msg)
+                          report['errors'].append(error_msg)
+                          
+                          instance_detail['volumes_processed'].append({
+                              'volume_id': volume_id,
+                              'status': 'error',
+                              'error': str(e)
+                          })
+              
+              report['details'].append(instance_detail)
+              return volumes_tagged
+
+          def get_volume_tags(ec2_client, volume_id):
+              """
+              Get current tags for an EBS volume
+              """
+              try:
+                  response = ec2_client.describe_tags(
+                      Filters=[
+                          {
+                              'Name': 'resource-id',
+                              'Values': [volume_id]
+                          }
+                      ]
+                  )
+                  return {tag['Key']: tag['Value'] for tag in response['Tags']}
+              except ClientError as e:
+                  logger.error(f"Error getting tags for volume {volume_id}: {e}")
+                  return {}
+
+          def get_tags_to_add(instance_tags, volume_tags):
+              """
+              Determine which tags need to be added to the volume
+              """
+              tags_to_add = {}
+              
+              for key, value in instance_tags.items():
+                  # Add tag if it doesn't exist on volume or if value is different
+                  if key not in volume_tags or volume_tags[key] != value:
+                      tags_to_add[key] = value
+              
+              return tags_to_add
+
+          def apply_tags_to_volume(ec2_client, volume_id, tags_to_add):
+              """
+              Apply tags to an EBS volume
+              """
+              try:
+                  tag_list = [{'Key': k, 'Value': v} for k, v in tags_to_add.items()]
+                  
+                  ec2_client.create_tags(
+                      Resources=[volume_id],
+                      Tags=tag_list
+                  )
+                  
+                  logger.info(f"Successfully tagged volume {volume_id} with {len(tags_to_add)} tags")
+                  
+              except ClientError as e:
+                  error_msg = f"Failed to tag volume {volume_id}: {e}"
+                  logger.error(error_msg)
+                  raise
+
+  # CloudWatch Log Group for Lambda
+  EBSAutoTaggerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LambdaFunctionName}'
+      RetentionInDays: 14
+
+  # EventBridge Rule to trigger Lambda every 5 minutes
+  EBSAutoTaggerScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${LambdaFunctionName}-schedule'
+      Description: 'Trigger EBS auto-tagger every 5 minutes'
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt EBSAutoTaggerFunction.Arn
+          Id: EBSAutoTaggerTarget
+
+  # Permission for EventBridge to invoke Lambda
+  EBSAutoTaggerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EBSAutoTaggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EBSAutoTaggerScheduleRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: 'ARN of the EBS Auto-Tagger Lambda function'
+    Value: !GetAtt EBSAutoTaggerFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-lambda-arn'
+  
+  ScheduleRuleArn:
+    Description: 'ARN of the EventBridge schedule rule'
+    Value: !GetAtt EBSAutoTaggerScheduleRule.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-schedule-rule-arn'
+  
+  LogGroupName:
+    Description: 'CloudWatch Log Group name for viewing reports'
+    Value: !Ref EBSAutoTaggerLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-log-group'
