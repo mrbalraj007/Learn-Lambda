@@ -40,7 +40,7 @@ This solution deploys a scheduled audit of AWS resources to identify cost-saving
 
 ## Deployment
 1. Package Lambda code and `openpyxl` dependencies into ZIPs.  
-2. Upload both ZIPs to the deployment S3 bucket.  
+2. ### Upload both ZIPs to the deployment S3 bucket.  
 3. Deploy or update the CloudFormation stack:  
    ```bash
    aws cloudformation deploy \
@@ -49,7 +49,7 @@ This solution deploys a scheduled audit of AWS resources to identify cost-saving
      --parameter-overrides \
        S3BucketName=<your-bucket> \
        NotificationEmail=<you@example.com> \
-       UseExistingBucket=false \
+       UseExistingBucket=true \
        CodeS3Key=src/lambda_function.zip \
        LayerS3Key=src/openpyxl_layer.zip \
      --capabilities CAPABILITY_NAMED_IAM
