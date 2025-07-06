@@ -1,0 +1,275 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Automatically tag snapshots with Retention and DeleteOn upon creation
+
+Parameters:
+  RetentionDays:
+    Type: Number
+    Default: 90
+    Description: Retention period in days for snapshot deletion tag
+
+Resources:
+
+  SnapshotTaggerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SnapshotTaggerLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SnapshotTagPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DescribeSnapshots
+                  - rds:AddTagsToResource
+                  - rds:DescribeDBSnapshots
+                  - fsx:TagResource
+                  - fsx:DescribeBackups
+                  - backup:TagResource
+                  - backup:ListRecoveryPointsByBackupVault
+                  - backup:DescribeRecoveryPoint
+                  - backup:ListBackupJobs
+                Resource: "*"
+
+  SnapshotTaggerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SnapshotTaggerFunction
+      Handler: index.lambda_handler
+      Role: !GetAtt SnapshotTaggerLambdaRole.Arn
+      Runtime: python3.11
+      Timeout: 180
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+          import time
+          from datetime import datetime, timedelta
+
+          def lambda_handler(event, context):
+              print("Event received:", json.dumps(event, default=str))
+              
+              retention_days = int(os.environ.get("RETENTION_DAYS", 90))
+              delete_on = (datetime.utcnow() + timedelta(days=retention_days)).strftime('%Y-%m-%d')
+              
+              try:
+                  if 'detail' in event:
+                      detail = event['detail']
+                      event_name = detail.get('eventName')
+                      
+                      # EBS Snapshots
+                      if event_name == 'CreateSnapshot':
+                          snapshot_id = detail['responseElements']['snapshotId']
+                          print(f"Tagging EBS snapshot: {snapshot_id}")
+                          ec2 = boto3.client('ec2')
+                          ec2.create_tags(
+                              Resources=[snapshot_id],
+                              Tags=[
+                                  {'Key': 'Retention', 'Value': f'{retention_days}days'},
+                                  {'Key': 'DeleteOn', 'Value': delete_on}
+                              ]
+                          )
+                          print(f"Successfully tagged EBS snapshot: {snapshot_id}")
+                      
+                      # AWS Backup Jobs - Enhanced handling
+                      elif event_name == 'StartBackupJob':
+                          backup_job_id = detail['responseElements']['backupJobId']
+                          backup_vault_name = detail['requestParameters']['backupVaultName']
+                          resource_arn = detail['requestParameters']['resourceArn']
+                          
+                          print(f"Processing backup job: {backup_job_id}")
+                          print(f"Backup vault: {backup_vault_name}")
+                          print(f"Resource ARN: {resource_arn}")
+                          
+                          backup = boto3.client('backup')
+                          recovery_point_arn = None
+                          
+                          # Enhanced polling with more attempts and better logic
+                          max_attempts = 24  # 24 attempts * 5 seconds = 120 seconds
+                          for attempt in range(max_attempts):
+                              try:
+                                  print(f"Attempt {attempt + 1}/{max_attempts}: Looking for recovery point...")
+                                  
+                                  # Get backup job details first
+                                  try:
+                                      job_details = backup.describe_backup_job(BackupJobId=backup_job_id)
+                                      job_status = job_details['State']
+                                      print(f"Backup job status: {job_status}")
+                                      
+                                      # If job completed, get the recovery point ARN directly
+                                      if job_status == 'COMPLETED' and 'RecoveryPointArn' in job_details:
+                                          recovery_point_arn = job_details['RecoveryPointArn']
+                                          print(f"Found recovery point from job details: {recovery_point_arn}")
+                                          break
+                                      elif job_status in ['FAILED', 'ABORTED']:
+                                          print(f"Backup job failed with status: {job_status}")
+                                          break
+                                  except Exception as job_error:
+                                      print(f"Error getting job details: {str(job_error)}")
+                                  
+                                  # Alternative method: List recovery points in vault
+                                  try:
+                                      response = backup.list_recovery_points_by_backup_vault(
+                                          BackupVaultName=backup_vault_name,
+                                          MaxResults=50
+                                      )
+                                      
+                                      # Look for recovery point created by our backup job
+                                      for rp in response.get('RecoveryPoints', []):
+                                          # Check if this recovery point matches our job
+                                          if (rp.get('BackupJobId') == backup_job_id or 
+                                              (rp.get('ResourceArn') == resource_arn and 
+                                               rp.get('Status') in ['COMPLETED', 'PARTIAL'])):
+                                              recovery_point_arn = rp['RecoveryPointArn']
+                                              print(f"Found recovery point by matching: {recovery_point_arn}")
+                                              break
+                                              
+                                  except Exception as list_error:
+                                      print(f"Error listing recovery points: {str(list_error)}")
+                                  
+                                  if recovery_point_arn:
+                                      break
+                                      
+                                  print(f"Recovery point not found yet, waiting 5 seconds...")
+                                  time.sleep(5)
+                                  
+                              except Exception as e:
+                                  print(f"Error in attempt {attempt + 1}: {str(e)}")
+                                  time.sleep(5)
+                          
+                          # Tag the recovery point if found
+                          if recovery_point_arn:
+                              try:
+                                  print(f"Attempting to tag recovery point: {recovery_point_arn}")
+                                  
+                                  # Verify the recovery point exists before tagging
+                                  try:
+                                      rp_details = backup.describe_recovery_point(
+                                          BackupVaultName=backup_vault_name,
+                                          RecoveryPointArn=recovery_point_arn
+                                      )
+                                      print(f"Recovery point details: {json.dumps(rp_details, default=str)}")
+                                  except Exception as desc_error:
+                                      print(f"Warning: Could not describe recovery point: {str(desc_error)}")
+                                  
+                                  # Apply tags
+                                  backup.tag_resource(
+                                      ResourceArn=recovery_point_arn,
+                                      Tags={
+                                          'Retention': f'{retention_days}days',
+                                          'DeleteOn': delete_on,
+                                          'AutoTagged': 'true',
+                                          'AutoTaggedDate': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+                                      }
+                                  )
+                                  print(f"Successfully tagged recovery point: {recovery_point_arn}")
+                                  
+                                  # Verify tags were applied
+                                  try:
+                                      time.sleep(2)  # Wait a moment for tags to propagate
+                                      tags_response = backup.list_tags(ResourceArn=recovery_point_arn)
+                                      print(f"Verified tags: {tags_response.get('Tags', {})}")
+                                  except Exception as verify_error:
+                                      print(f"Could not verify tags: {str(verify_error)}")
+                                  
+                              except Exception as tag_error:
+                                  print(f"Error tagging recovery point: {str(tag_error)}")
+                                  print(f"Recovery point ARN: {recovery_point_arn}")
+                                  print(f"Backup vault: {backup_vault_name}")
+                                  raise tag_error
+                          else:
+                              print(f"ERROR: Recovery point not found for backup job: {backup_job_id}")
+                              print(f"Backup vault: {backup_vault_name}")
+                              print(f"Resource ARN: {resource_arn}")
+                      
+                      # RDS Snapshots
+                      elif event_name in ['CreateDBSnapshot', 'CreateDBClusterSnapshot']:
+                          if 'dbSnapshotIdentifier' in detail.get('responseElements', {}):
+                              snapshot_id = detail['responseElements']['dbSnapshotIdentifier']
+                              print(f"Tagging RDS snapshot: {snapshot_id}")
+                              rds = boto3.client('rds')
+                              # Get the full ARN for the snapshot
+                              snapshots = rds.describe_db_snapshots(DBSnapshotIdentifier=snapshot_id)
+                              if snapshots['DBSnapshots']:
+                                  snapshot_arn = snapshots['DBSnapshots'][0]['DBSnapshotArn']
+                                  rds.add_tags_to_resource(
+                                      ResourceName=snapshot_arn,
+                                      Tags=[
+                                          {'Key': 'Retention', 'Value': f'{retention_days}days'},
+                                          {'Key': 'DeleteOn', 'Value': delete_on}
+                                      ]
+                                  )
+                                  print(f"Successfully tagged RDS snapshot: {snapshot_id}")
+                          elif 'dbClusterSnapshotIdentifier' in detail.get('responseElements', {}):
+                              snapshot_id = detail['responseElements']['dbClusterSnapshotIdentifier']
+                              print(f"Tagging RDS cluster snapshot: {snapshot_id}")
+                              rds = boto3.client('rds')
+                              # Get the full ARN for the cluster snapshot
+                              snapshots = rds.describe_db_cluster_snapshots(DBClusterSnapshotIdentifier=snapshot_id)
+                              if snapshots['DBClusterSnapshots']:
+                                  snapshot_arn = snapshots['DBClusterSnapshots'][0]['DBClusterSnapshotArn']
+                                  rds.add_tags_to_resource(
+                                      ResourceName=snapshot_arn,
+                                      Tags=[
+                                          {'Key': 'Retention', 'Value': f'{retention_days}days'},
+                                          {'Key': 'DeleteOn', 'Value': delete_on}
+                                      ]
+                                  )
+                                  print(f"Successfully tagged RDS cluster snapshot: {snapshot_id}")
+
+              except Exception as e:
+                  print(f"ERROR: Exception processing event: {str(e)}")
+                  print(f"Event details: {json.dumps(event, default=str)}")
+                  import traceback
+                  print(f"Traceback: {traceback.format_exc()}")
+                  raise e
+
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Tagging complete')
+              }
+
+      Environment:
+        Variables:
+          RETENTION_DAYS: !Ref RetentionDays
+
+  SnapshotEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: SnapshotCreationEventRule
+      EventPattern:
+        source:
+          - "aws.ec2"
+          - "aws.rds"
+          - "aws.fsx"
+          - "aws.backup"
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventName:
+            - "CreateSnapshot"
+            - "StartBackupJob"
+            - "CreateDBSnapshot"
+            - "CreateDBClusterSnapshot"
+      Targets:
+        - Arn: !GetAtt SnapshotTaggerLambda.Arn
+          Id: SnapshotTaggerLambdaTarget
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SnapshotTaggerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SnapshotEventRule.Arn

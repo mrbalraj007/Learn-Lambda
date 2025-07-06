@@ -1,0 +1,594 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for tagging AWS Backup-generated EBS snapshots'
+
+Resources:
+  SnapshotTaggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SnapshotTaggingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeInstances
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - backup:DescribeBackupJob
+                  - backup:ListTags
+                  - backup:GetBackupPlan
+                  - backup:ListRecoveryPointsByBackupVault
+                  - backup:ListBackupJobs
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cloudtrail:LookupEvents
+                Resource: '*'
+
+  BackupSnapshotTaggerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: AWSBackupSnapshotTagger
+      Handler: index.lambda_handler
+      Role: !GetAtt SnapshotTaggerRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import datetime
+          import logging
+          import time
+          import re
+          from botocore.exceptions import ClientError
+          
+          # Configure logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          def lambda_handler(event, context):
+              """
+              Lambda function that adds retention tags to snapshots created by AWS Backup or manually.
+              """
+              logger.info("====== STARTING EXECUTION ======")
+              logger.info(f"Event source: {event.get('source', 'Unknown')}")
+              logger.info(f"Detail type: {event.get('detail-type', 'Unknown')}")
+              logger.info(f"Raw event: {json.dumps(event, default=str)}")
+              
+              # Initialize counters
+              snapshots_processed = 0
+              snapshots_tagged = 0
+              
+              try:
+                  # Determine event type and extract snapshot IDs
+                  snapshot_ids = []
+                  event_type = determine_event_type(event)
+                  logger.info(f"Detected event type: {event_type}")
+                  
+                  if event_type == "aws_backup_completion":
+                      snapshot_ids = handle_backup_completion_event(event)
+                  elif event_type == "ec2_snapshot_notification":
+                      snapshot_ids = handle_ec2_snapshot_event(event)
+                  elif event_type == "cloudtrail_api_call":
+                      snapshot_ids = handle_cloudtrail_event(event)
+                  elif event_type == "scheduled_execution":
+                      snapshot_ids = handle_scheduled_execution(event)
+                  elif event_type == "manual_test":
+                      snapshot_ids = handle_manual_test(event)
+                  else:
+                      logger.warning(f"Unknown event type. Falling back to recent snapshot processing.")
+                      snapshot_ids = get_recent_snapshots(hours=2)
+                  
+                  logger.info(f"Found {len(snapshot_ids)} snapshots to process: {snapshot_ids}")
+                  
+                  # Process each snapshot
+                  for snapshot_id in snapshot_ids:
+                      snapshots_processed += 1
+                      if tag_snapshot(snapshot_id):
+                          snapshots_tagged += 1
+                  
+                  # If no snapshots were found through event processing, try fallback methods
+                  if not snapshot_ids:
+                      logger.info("No snapshots found in event. Trying fallback methods...")
+                      fallback_snapshots = get_recent_snapshots(hours=1)
+                      logger.info(f"Found {len(fallback_snapshots)} recent snapshots via fallback")
+                      
+                      for snapshot_id in fallback_snapshots:
+                          snapshots_processed += 1
+                          if tag_snapshot(snapshot_id):
+                              snapshots_tagged += 1
+                  
+                  logger.info(f"Execution summary: {snapshots_processed} processed, {snapshots_tagged} tagged")
+                  
+              except Exception as e:
+                  logger.error(f"Error in lambda_handler: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f'Error: {str(e)}')
+                  }
+              
+              logger.info("====== EXECUTION COMPLETE ======")
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps({
+                      'message': 'Snapshot tagging completed',
+                      'processed': snapshots_processed,
+                      'tagged': snapshots_tagged
+                  })
+              }
+          
+          def determine_event_type(event):
+              """Determine the type of event we're processing."""
+              if not isinstance(event, dict):
+                  return "unknown"
+              
+              # AWS Backup completion event
+              if (event.get('source') == 'aws.backup' and 
+                  event.get('detail-type') == 'Backup Job State Change' and
+                  event.get('detail', {}).get('state') == 'COMPLETED'):
+                  return "aws_backup_completion"
+              
+              # EC2 snapshot notification
+              if (event.get('source') == 'aws.ec2' and 
+                  event.get('detail-type') == 'EBS Snapshot Notification'):
+                  return "ec2_snapshot_notification"
+              
+              # CloudTrail API call
+              if (event.get('source') == 'aws.ec2' and 
+                  event.get('detail-type') == 'AWS API Call via CloudTrail'):
+                  return "cloudtrail_api_call"
+              
+              # Scheduled execution
+              if (event.get('source') == 'aws.events' or 
+                  'process_recent' in event):
+                  return "scheduled_execution"
+              
+              # Manual test with snapshot ID
+              if ('snapshot_id' in event or 
+                  'snapshot-id' in event.get('detail', {})):
+                  return "manual_test"
+              
+              return "unknown"
+          
+          def handle_backup_completion_event(event):
+              """Handle AWS Backup job completion events."""
+              snapshot_ids = []
+              try:
+                  detail = event.get('detail', {})
+                  backup_job_id = detail.get('backupJobId')
+                  
+                  if backup_job_id:
+                      logger.info(f"Processing AWS Backup job completion: {backup_job_id}")
+                      
+                      # Get backup job details
+                      backup_client = boto3.client('backup')
+                      job_response = backup_client.describe_backup_job(BackupJobId=backup_job_id)
+                      
+                      logger.info(f"Backup job details: {json.dumps(job_response, default=str)}")
+                      
+                      # Look for recovery point ARN which might contain snapshot info
+                      recovery_point_arn = job_response.get('RecoveryPointArn')
+                      if recovery_point_arn and 'snapshot' in recovery_point_arn:
+                          # Extract snapshot ID from ARN
+                          snapshot_id = recovery_point_arn.split('/')[-1]
+                          if snapshot_id.startswith('snap-'):
+                              snapshot_ids.append(snapshot_id)
+                      
+                      # Also check created resource ARN
+                      created_resource_arn = job_response.get('CreatedResourceArn')
+                      if created_resource_arn and 'snapshot' in created_resource_arn:
+                          snapshot_id = created_resource_arn.split('/')[-1]
+                          if snapshot_id.startswith('snap-'):
+                              snapshot_ids.append(snapshot_id)
+                      
+                      # If no direct snapshot found, look for recent snapshots from same time
+                      if not snapshot_ids:
+                          completion_date = job_response.get('CompletionDate')
+                          if completion_date:
+                              # Look for snapshots created around the same time
+                              snapshot_ids = find_snapshots_by_timeframe(completion_date)
+              
+              except Exception as e:
+                  logger.error(f"Error handling backup completion event: {str(e)}")
+              
+              return snapshot_ids
+          
+          def handle_ec2_snapshot_event(event):
+              """Handle EC2 EBS Snapshot Notification events."""
+              snapshot_ids = []
+              try:
+                  detail = event.get('detail', {})
+                  
+                  # Look for snapshot ID in various possible locations
+                  possible_keys = ['snapshot-id', 'snapshotId', 'resource-id']
+                  for key in possible_keys:
+                      if key in detail:
+                          snapshot_id = detail[key]
+                          if snapshot_id.startswith('snap-'):
+                              snapshot_ids.append(snapshot_id)
+                              break
+                  
+                  # Also check if it's in the event itself
+                  if not snapshot_ids:
+                      event_str = json.dumps(event)
+                      potential_ids = re.findall(r'(snap-[0-9a-f]{8,17})', event_str)
+                      snapshot_ids.extend(potential_ids)
+              
+              except Exception as e:
+                  logger.error(f"Error handling EC2 snapshot event: {str(e)}")
+              
+              return snapshot_ids
+          
+          def handle_cloudtrail_event(event):
+              """Handle CloudTrail API call events."""
+              snapshot_ids = []
+              try:
+                  detail = event.get('detail', {})
+                  event_name = detail.get('eventName', '')
+                  
+                  if event_name in ['CreateSnapshot', 'CreateSnapshots', 'CopySnapshot']:
+                      # Look in response elements
+                      response_elements = detail.get('responseElements', {})
+                      
+                      if 'snapshot' in response_elements:
+                          snapshot = response_elements['snapshot']
+                          if 'snapshotId' in snapshot:
+                              snapshot_ids.append(snapshot['snapshotId'])
+                      
+                      if 'snapshots' in response_elements:
+                          for snapshot in response_elements['snapshots']:
+                              if 'snapshotId' in snapshot:
+                                  snapshot_ids.append(snapshot['snapshotId'])
+                      
+                      # Also check snapshotSet format
+                      snapshot_set = response_elements.get('snapshotSet', {})
+                      items = snapshot_set.get('item', [])
+                      for item in items:
+                          if 'snapshotId' in item:
+                              snapshot_ids.append(item['snapshotId'])
+              
+              except Exception as e:
+                  logger.error(f"Error handling CloudTrail event: {str(e)}")
+              
+              return snapshot_ids
+          
+          def handle_scheduled_execution(event):
+              """Handle scheduled execution events."""
+              logger.info("Processing scheduled execution - looking for recent snapshots")
+              return get_recent_snapshots(hours=24)
+          
+          def handle_manual_test(event):
+              """Handle manual test events with snapshot IDs."""
+              snapshot_ids = []
+              
+              # Direct snapshot_id parameter
+              if 'snapshot_id' in event:
+                  snapshot_ids.append(event['snapshot_id'])
+              
+              # In detail section
+              detail = event.get('detail', {})
+              if 'snapshot-id' in detail:
+                  snapshot_ids.append(detail['snapshot-id'])
+              
+              return snapshot_ids
+          
+          def find_snapshots_by_timeframe(target_time, window_minutes=30):
+              """Find snapshots created within a time window."""
+              snapshot_ids = []
+              try:
+                  ec2 = boto3.client('ec2')
+                  
+                  # Calculate time window
+                  if isinstance(target_time, str):
+                      target_time = datetime.datetime.fromisoformat(target_time.replace('Z', '+00:00'))
+                  
+                  start_time = target_time - datetime.timedelta(minutes=window_minutes)
+                  end_time = target_time + datetime.timedelta(minutes=window_minutes)
+                  
+                  # Query snapshots in time window
+                  response = ec2.describe_snapshots(
+                      OwnerIds=['self'],
+                      Filters=[
+                          {
+                              'Name': 'start-time',
+                              'Values': [start_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')]
+                          }
+                      ]
+                  )
+                  
+                  for snapshot in response['Snapshots']:
+                      snapshot_time = snapshot['StartTime']
+                      if start_time <= snapshot_time <= end_time:
+                          # Check if not already tagged
+                          already_tagged = False
+                          for tag in snapshot.get('Tags', []):
+                              if (tag.get('Key') == 'AutoTaggedBy' and 
+                                  tag.get('Value') == 'AWSBackupSnapshotTagger'):
+                                  already_tagged = True
+                                  break
+                          
+                          if not already_tagged:
+                              snapshot_ids.append(snapshot['SnapshotId'])
+              
+              except Exception as e:
+                  logger.error(f"Error finding snapshots by timeframe: {str(e)}")
+              
+              return snapshot_ids
+          
+          def get_recent_snapshots(hours=24):
+              """Get all snapshots created in the last X hours."""
+              ec2 = boto3.client('ec2')
+              start_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours)
+              
+              snapshots = []
+              try:
+                  paginator = ec2.get_paginator('describe_snapshots')
+                  page_iterator = paginator.paginate(
+                      OwnerIds=['self'],
+                      Filters=[
+                          {
+                              'Name': 'start-time',
+                              'Values': [start_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')]
+                          }
+                      ]
+                  )
+                  
+                  for page in page_iterator:
+                      for snapshot in page['Snapshots']:
+                          # Check if snapshot already has our tags
+                          already_tagged = False
+                          for tag in snapshot.get('Tags', []):
+                              if (tag.get('Key') == 'AutoTaggedBy' and 
+                                  tag.get('Value') == 'AWSBackupSnapshotTagger'):
+                                  already_tagged = True
+                                  break
+                          
+                          if not already_tagged:
+                              snapshots.append(snapshot['SnapshotId'])
+                              
+                  logger.info(f"Found {len(snapshots)} untagged snapshots in last {hours} hours")
+              
+              except Exception as e:
+                  logger.error(f"Error getting recent snapshots: {str(e)}")
+              
+              return snapshots
+          
+          def tag_snapshot(snapshot_id):
+              """Add retention tags to the specified snapshot."""
+              ec2 = boto3.client('ec2')
+              
+              try:
+                  # First verify the snapshot exists and get its details
+                  describe_response = ec2.describe_snapshots(SnapshotIds=[snapshot_id])
+                  
+                  if not describe_response['Snapshots']:
+                      logger.error(f"Snapshot {snapshot_id} not found")
+                      return False
+                  
+                  snapshot = describe_response['Snapshots'][0]
+                  logger.info(f"Processing snapshot {snapshot_id} - State: {snapshot.get('State')}, Progress: {snapshot.get('Progress')}")
+                  
+                  # Check if already tagged
+                  existing_tags = snapshot.get('Tags', [])
+                  for tag in existing_tags:
+                      if (tag.get('Key') == 'AutoTaggedBy' and 
+                          tag.get('Value') == 'AWSBackupSnapshotTagger'):
+                          logger.info(f"Snapshot {snapshot_id} already tagged, skipping")
+                          return True
+                  
+                  # Calculate the deletion date (90 days from now)
+                  today = datetime.datetime.now(datetime.timezone.utc)
+                  delete_date = today + datetime.timedelta(days=90)
+                  delete_date_str = delete_date.strftime('%Y-%m-%d')
+                  
+                  # Prepare tags
+                  tags_to_add = [
+                      {'Key': 'Retention', 'Value': '90days'},
+                      {'Key': 'DeleteOn', 'Value': delete_date_str},
+                      {'Key': 'AutoTaggedBy', 'Value': 'AWSBackupSnapshotTagger'},
+                      {'Key': 'TaggedDate', 'Value': today.strftime('%Y-%m-%d')}
+                  ]
+                  
+                  # Add tags
+                  ec2.create_tags(Resources=[snapshot_id], Tags=tags_to_add)
+                  
+                  logger.info(f"Successfully tagged snapshot {snapshot_id} with retention tags")
+                  
+                  # Verify tags were applied
+                  verify_response = ec2.describe_snapshots(SnapshotIds=[snapshot_id])
+                  new_tags = verify_response['Snapshots'][0].get('Tags', [])
+                  tag_keys = [tag['Key'] for tag in new_tags]
+                  
+                  if 'AutoTaggedBy' in tag_keys:
+                      logger.info(f"Tags verified for snapshot {snapshot_id}")
+                      return True
+                  else:
+                      logger.warning(f"Tag verification failed for snapshot {snapshot_id}")
+                      return False
+                      
+              except ClientError as e:
+                  error_code = e.response['Error']['Code']
+                  if error_code == 'InvalidSnapshot.NotFound':
+                      logger.warning(f"Snapshot {snapshot_id} not found - may have been deleted")
+                  else:
+                      logger.error(f"AWS error tagging snapshot {snapshot_id}: {error_code} - {str(e)}")
+                  return False
+              except Exception as e:
+                  logger.error(f"Unexpected error tagging snapshot {snapshot_id}: {str(e)}")
+                  return False
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+
+  # AWS Backup completion events
+  BackupCompletionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: AWSBackupCompletionRule
+      Description: 'Trigger when AWS Backup jobs complete'
+      EventPattern:
+        source:
+          - aws.backup
+        detail-type:
+          - 'Backup Job State Change'
+        detail:
+          state:
+            - COMPLETED
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BackupSnapshotTaggerFunction.Arn
+          Id: BackupCompletionTarget
+
+  BackupCompletionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BackupSnapshotTaggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BackupCompletionRule.Arn
+
+  # EC2 Snapshot state change events
+  EC2SnapshotStateRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: EC2SnapshotStateChangeRule
+      Description: 'Trigger on EC2 snapshot state changes'
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - 'EBS Snapshot Notification'
+        detail:
+          state:
+            - completed
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BackupSnapshotTaggerFunction.Arn
+          Id: EC2SnapshotStateTarget
+
+  EC2SnapshotStatePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BackupSnapshotTaggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EC2SnapshotStateRule.Arn
+
+# CloudTrail API events for snapshot creation
+  CloudTrailSnapshotRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: CloudTrailSnapshotCreationRule
+      Description: 'Trigger on snapshot creation API calls'
+      EventPattern:
+        source:
+          - aws.ec2
+        detail-type:
+          - 'AWS API Call via CloudTrail'
+        detail:
+          eventSource:
+            - ec2.amazonaws.com
+          eventName:
+            - CreateSnapshot
+            - CreateSnapshots
+            - CopySnapshot
+          # Fix the exists syntax - must be an array with object
+          responseElements:
+            - exists: true
+
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BackupSnapshotTaggerFunction.Arn
+          Id: CloudTrailSnapshotTarget
+
+  CloudTrailSnapshotPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BackupSnapshotTaggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CloudTrailSnapshotRule.Arn
+
+  # Scheduled execution for cleanup
+  ScheduledSnapshotTaggingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: DailySnapshotTagging
+      Description: 'Daily cleanup to tag any missed snapshots'
+      ScheduleExpression: 'cron(0 6 * * ? *)' # Run at 6 AM UTC daily
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BackupSnapshotTaggerFunction.Arn
+          Id: ScheduledTaggingTarget
+          Input: '{"process_recent": true, "hours": 24}'
+
+  ScheduledTaggingPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BackupSnapshotTaggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledSnapshotTaggingRule.Arn
+
+  # Add a catch-all rule for debugging
+  EC2CatchAllDebugRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: EC2CatchAllDebugRule
+      Description: 'Rule to capture all EC2 events for debugging'
+      EventPattern:
+        source:
+          - aws.ec2
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BackupSnapshotTaggerFunction.Arn
+          Id: EC2CatchAllDebugTarget
+
+  EC2CatchAllDebugPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BackupSnapshotTaggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EC2CatchAllDebugRule.Arn
+
+Outputs:
+  BackupSnapshotTaggerFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt BackupSnapshotTaggerFunction.Arn
+
+  BackupCompletionRuleArn:
+    Description: ARN of the EventBridge rule for Backup job completion
+    Value: !GetAtt BackupCompletionRule.Arn
+    
+  ScheduledTaggingRuleArn:
+    Description: ARN of the EventBridge rule for scheduled tagging
+    Value: !GetAtt ScheduledSnapshotTaggingRule.Arn
+    
+  EC2EBSSnapshotRuleArn:
+    Description: ARN of the EventBridge rule for EBS snapshot notifications
+    Value: !GetAtt EC2SnapshotStateRule.Arn # Corrected to EC2SnapshotStateRule
+    
+  EC2CloudTrailSnapshotRuleArn:
+    Description: ARN of the EventBridge rule for EC2 CloudTrail events
+    Value: !GetAtt CloudTrailSnapshotRule.Arn # Corrected to CloudTrailSnapshotRule
+    
+  EC2CatchAllDebugRuleArn:
+    Description: ARN of the EventBridge rule for all EC2 events (debug)
+    Value: !GetAtt EC2CatchAllDebugRule.Arn

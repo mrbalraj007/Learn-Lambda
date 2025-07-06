@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Automatically tag snapshots with Retention and DeleteOn upon creation
+
+Parameters:
+  RetentionDays:
+    Type: Number
+    Default: 90
+    Description: Retention period in days for snapshot deletion tag
+
+Resources:
+
+  SnapshotTaggerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SnapshotTaggerLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SnapshotTagPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DescribeSnapshots
+                  - rds:AddTagsToResource
+                  - rds:DescribeDBSnapshots
+                  - fsx:TagResource
+                  - fsx:DescribeBackups
+                  - backup:TagResource
+                  - backup:ListRecoveryPointsByBackupVault
+                Resource: "*"
+
+  SnapshotTaggerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SnapshotTaggerFunction
+      Handler: index.lambda_handler
+      Role: !GetAtt SnapshotTaggerLambdaRole.Arn
+      Runtime: python3.11
+      Timeout: 60
+      Code:
+        S3Bucket: PLACEHOLDER_BUCKET
+        S3Key: lambda-code.zip
+      Environment:
+        Variables:
+          RETENTION_DAYS: !Ref RetentionDays
+
+  SnapshotEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: SnapshotCreationEventRule
+      EventPattern:
+        source:
+          - "aws.ec2"
+          - "aws.rds"
+          - "aws.fsx"
+          - "aws.backup"
+        detail-type:
+          - "AWS API Call via CloudTrail"
+        detail:
+          eventName:
+            - "CreateSnapshot"
+            - "StartBackupJob"
+      Targets:
+        - Arn: !GetAtt SnapshotTaggerLambda.Arn
+          Id: SnapshotTaggerLambdaTarget
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SnapshotTaggerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SnapshotEventRule.Arn
