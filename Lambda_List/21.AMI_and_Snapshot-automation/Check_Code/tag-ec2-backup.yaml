@@ -1,0 +1,296 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Enhanced Lambda to tag resources from AWS Backup and scheduled tagging
+
+Resources:
+  TagBackupLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/BackupAwareTagger'
+      RetentionInDays: 14
+
+  TagBackupLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'BackupAwareTaggerRole-${AWS::Region}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BackupAwareTaggerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeImages
+                  - ec2:DescribeSnapshots
+                  - ec2:CreateTags
+                  - backup:DescribeBackupJob
+                  - backup:ListRecoveryPoints
+                Resource: "*"
+
+  BackupAwareTaggerFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: TagBackupLambdaLogGroup
+    Properties:
+      FunctionName: BackupAwareTagger
+      Handler: index.lambda_handler
+      Runtime: python3.12
+      Timeout: 300
+      MemorySize: 128
+      Role: !GetAtt TagBackupLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import datetime
+          import os
+          import logging
+          import json
+          from botocore.exceptions import ClientError
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              """
+              Enhanced Lambda function that responds to AWS Backup completion events
+              """
+              try:
+                  # Check if this is triggered by AWS Backup completion event
+                  if 'source' in event and event['source'] == 'aws.backup':
+                      return handle_backup_completion_event(event, context)
+                  else:
+                      # Fallback to scheduled tagging of all resources
+                      return handle_scheduled_tagging(event, context)
+                      
+              except Exception as e:
+                  error_message = f"Error in lambda execution: {str(e)}"
+                  logger.error(error_message)
+                  return {
+                      'statusCode': 500,
+                      'message': error_message
+                  }
+
+          def handle_backup_completion_event(event, context):
+              """Handle AWS Backup job completion events"""
+              try:
+                  detail = event.get('detail', {})
+                  backup_job_id = detail.get('backupJobId')
+                  state = detail.get('state')
+                  resource_arn = detail.get('resourceArn')
+                  
+                  logger.info(f"Processing backup completion event for job: {backup_job_id}")
+                  logger.info(f"Backup state: {state}, Resource: {resource_arn}")
+                  
+                  if state != 'COMPLETED':
+                      logger.info(f"Backup job {backup_job_id} not completed. State: {state}")
+                      return {
+                          'statusCode': 200,
+                          'message': f'Backup job {backup_job_id} state is {state}, no tagging needed'
+                      }
+                  
+                  # Get backup details to find created resources
+                  backup_client = boto3.client('backup')
+                  ec2_client = boto3.client('ec2')
+                  
+                  # Get backup job details
+                  backup_job = backup_client.describe_backup_job(BackupJobId=backup_job_id)
+                  recovery_point_arn = backup_job['RecoveryPointArn']
+                  
+                  # Extract snapshot ID or AMI ID from recovery point
+                  tagged_resources = tag_backup_resources(ec2_client, recovery_point_arn, backup_job)
+                  
+                  return {
+                      'statusCode': 200,
+                      'message': f'Successfully tagged resources from backup job {backup_job_id}',
+                      'backup_job_id': backup_job_id,
+                      'tagged_resources': tagged_resources
+                  }
+                  
+              except Exception as e:
+                  logger.error(f"Error processing backup completion event: {str(e)}")
+                  raise
+
+          def tag_backup_resources(ec2_client, recovery_point_arn, backup_job):
+              """Tag resources created by the backup job"""
+              tagged_resources = []
+              retention_days = int(os.environ.get('RETENTION_DAYS', '90'))
+              
+              today = datetime.date.today()
+              delete_on = today + datetime.timedelta(days=retention_days)
+              formatted_delete_on = delete_on.strftime('%Y-%m-%d')
+              
+              # Extract resource ID from recovery point ARN
+              # ARN format: arn:aws:ec2:region:account:snapshot/snap-xxxxxxxxx
+              if ':snapshot/' in recovery_point_arn:
+                  snapshot_id = recovery_point_arn.split('/')[-1]
+                  try:
+                      ec2_client.create_tags(
+                          Resources=[snapshot_id],
+                          Tags=[
+                              {'Key': 'Retention', 'Value': f'{retention_days}days'},
+                              {'Key': 'DeleteOn', 'Value': formatted_delete_on},
+                              {'Key': 'BackupSource', 'Value': 'AWS-Backup'},
+                              {'Key': 'BackupJobId', 'Value': backup_job['BackupJobId']}
+                          ]
+                      )
+                      tagged_resources.append({'type': 'snapshot', 'id': snapshot_id})
+                      logger.info(f'Tagged snapshot from backup: {snapshot_id}')
+                  except ClientError as e:
+                      logger.error(f'Failed to tag snapshot {snapshot_id}: {str(e)}')
+              
+              elif ':image/' in recovery_point_arn:
+                  ami_id = recovery_point_arn.split('/')[-1]
+                  try:
+                      ec2_client.create_tags(
+                          Resources=[ami_id],
+                          Tags=[
+                              {'Key': 'Retention', 'Value': f'{retention_days}days'},
+                              {'Key': 'DeleteOn', 'Value': formatted_delete_on},
+                              {'Key': 'BackupSource', 'Value': 'AWS-Backup'},
+                              {'Key': 'BackupJobId', 'Value': backup_job['BackupJobId']}
+                          ]
+                      )
+                      tagged_resources.append({'type': 'ami', 'id': ami_id})
+                      logger.info(f'Tagged AMI from backup: {ami_id}')
+                  except ClientError as e:
+                      logger.error(f'Failed to tag AMI {ami_id}: {str(e)}')
+              
+              return tagged_resources
+
+          def handle_scheduled_tagging(event, context):
+              """Original scheduled tagging functionality"""
+              ec2 = boto3.client('ec2')
+              retention_days = int(os.environ.get('RETENTION_DAYS', '90'))
+              
+              today = datetime.date.today()
+              delete_on = today + datetime.timedelta(days=retention_days)
+              formatted_delete_on = delete_on.strftime('%Y-%m-%d')
+              
+              logger.info(f"Starting scheduled tagging with {retention_days} days retention")
+              
+              ami_count = tag_all_amis(ec2, retention_days, formatted_delete_on)
+              snapshot_count = tag_all_snapshots(ec2, retention_days, formatted_delete_on)
+              
+              return {
+                  'statusCode': 200,
+                  'message': f'Scheduled tagging completed: {ami_count} AMIs and {snapshot_count} snapshots',
+                  'amis_tagged': ami_count,
+                  'snapshots_tagged': snapshot_count
+              }
+
+          def tag_all_amis(ec2, retention_days, formatted_delete_on):
+              """Tag all owned AMIs"""
+              ami_count = 0
+              try:
+                  images_response = ec2.describe_images(Owners=['self'])
+                  images = images_response.get('Images', [])
+                  
+                  for image in images:
+                      image_id = image['ImageId']
+                      try:
+                          ec2.create_tags(
+                              Resources=[image_id],
+                              Tags=[
+                                  {'Key': 'Retention', 'Value': f'{retention_days}days'},
+                                  {'Key': 'DeleteOn', 'Value': formatted_delete_on}
+                              ]
+                          )
+                          ami_count += 1
+                      except ClientError as e:
+                          logger.error(f'Failed to tag AMI {image_id}: {str(e)}')
+                          
+              except ClientError as e:
+                  logger.error(f'Failed to describe AMIs: {str(e)}')
+                  raise
+              
+              return ami_count
+
+          def tag_all_snapshots(ec2, retention_days, formatted_delete_on):
+              """Tag all owned snapshots"""
+              snapshot_count = 0
+              try:
+                  snapshots_response = ec2.describe_snapshots(OwnerIds=['self'])
+                  snapshots = snapshots_response.get('Snapshots', [])
+                  
+                  for snap in snapshots:
+                      snapshot_id = snap['SnapshotId']
+                      try:
+                          ec2.create_tags(
+                              Resources=[snapshot_id],
+                              Tags=[
+                                  {'Key': 'Retention', 'Value': f'{retention_days}days'},
+                                  {'Key': 'DeleteOn', 'Value': formatted_delete_on}
+                              ]
+                          )
+                          snapshot_count += 1
+                      except ClientError as e:
+                          logger.error(f'Failed to tag snapshot {snapshot_id}: {str(e)}')
+                          
+              except ClientError as e:
+                  logger.error(f'Failed to describe snapshots: {str(e)}')
+                  raise
+              
+              return snapshot_count
+      Environment:
+        Variables:
+          RETENTION_DAYS: "90"
+
+  # EventBridge rule for scheduled tagging (fallback)
+  ScheduledTaggingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'ScheduledBackupTagger-${AWS::Region}'
+      Description: 'Daily fallback tagging for all resources'
+      ScheduleExpression: 'rate(1 day)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BackupAwareTaggerFunction.Arn
+          Id: ScheduledTaggingTarget
+
+  # EventBridge rule for AWS Backup completion events
+  BackupCompletionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'BackupCompletionTagger-${AWS::Region}'
+      Description: 'Trigger tagging when AWS Backup job completes'
+      EventPattern:
+        source:
+          - aws.backup
+        detail-type:
+          - Backup Job State Change
+        detail:
+          state:
+            - COMPLETED
+            - FAILED
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt BackupAwareTaggerFunction.Arn
+          Id: BackupCompletionTarget
+
+  LambdaScheduledInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BackupAwareTaggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledTaggingRule.Arn
+
+  LambdaBackupInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BackupAwareTaggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BackupCompletionRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: 'ARN of the backup-aware Lambda function'
+    Value: !GetAtt BackupAwareTaggerFunction.Arn

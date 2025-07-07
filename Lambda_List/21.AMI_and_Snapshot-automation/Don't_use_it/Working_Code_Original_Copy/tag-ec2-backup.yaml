@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lambda to tag AMIs and Snapshots with Retention and DeleteOn tags
+
+Resources:
+  TagBackupLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/TagEC2Backups'
+      RetentionInDays: 14
+
+  TagBackupLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'TagEC2BackupsLambdaRole-${AWS::Region}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: TagEC2BackupPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeImages
+                  - ec2:DescribeSnapshots
+                  - ec2:CreateTags
+                Resource: "*"
+
+  TagBackupLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: TagBackupLambdaLogGroup
+    Properties:
+      FunctionName: TagEC2Backups
+      Handler: tag_ami_snapshot.lambda_handler
+      Runtime: python3.12
+      Timeout: 300
+      MemorySize: 128
+      Role: !GetAtt TagBackupLambdaRole.Arn
+      Code:
+        S3Bucket: demo-terra22062025
+        S3Key: tag-ec2-backup.zip
+      Environment:
+        Variables:
+          RETENTION_DAYS: "90"
+
+  LambdaScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'DailyEC2BackupTagger-${AWS::Region}'
+      Description: 'Daily trigger for EC2 backup tagging Lambda'
+      ScheduleExpression: 'rate(1 day)'
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt TagBackupLambdaFunction.Arn
+          Id: TagBackupTarget
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TagBackupLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LambdaScheduleRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: 'ARN of the Lambda function'
+    Value: !GetAtt TagBackupLambdaFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArn'

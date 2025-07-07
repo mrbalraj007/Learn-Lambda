@@ -1,0 +1,1 @@
+{"statusCode": 200, "message": "Successfully tagged 1 AMIs and 2 snapshots", "amis_tagged": 1, "snapshots_tagged": 2, "retention_days": 90, "delete_on": "2025-10-04"}
