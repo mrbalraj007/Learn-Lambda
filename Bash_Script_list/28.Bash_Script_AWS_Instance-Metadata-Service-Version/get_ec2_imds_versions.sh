@@ -1,5 +1,5 @@
 #!/bin/bash
-# filepath: c:\Users\BalraSin\OneDrive - Jetstar Airways Pty Ltd\Balraj_D_Laptop_Drive\DevOps_Master\Learn-Lambda\Bash_Script_list\28.Bash_Script_AWS_\get_ec2_imds_versions.sh
+# filepath: get_ec2_imds_versions.sh
 
 # AWS EC2 Instance Metadata Service Version Checker
 # This script retrieves IMDS configuration for all EC2 instances
