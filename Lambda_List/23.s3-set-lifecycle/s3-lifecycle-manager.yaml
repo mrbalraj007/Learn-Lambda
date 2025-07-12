@@ -1,0 +1,640 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy S3 lifecycle cleanup automation with HTML email notifications and CSV attachment'
+
+Parameters:
+  TransitionToIADays:
+    Type: Number
+    Default: 90
+    Description: Number of days after which S3 objects will transition to Infrequent Access
+    MinValue: 30
+    MaxValue: 3650
+  ExpirationDays:
+    Type: Number
+    Default: 180
+    Description: Number of days after which S3 objects will expire (6 months)
+    MinValue: 1
+    MaxValue: 3650
+  ScheduleExpression:
+    Type: String
+    Default: 'cron(0 18 ? * FRI *)'
+    Description: Schedule expression for when to run the automation (weekly on Saturday at 4 AM AEST)
+  DryRun:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: If true, the Lambda will only log what would be done without actually applying lifecycle policies
+  TagKey:
+    Type: String
+    Default: 'LifecycleExclude'
+    Description: Tag key to check for exclusion from lifecycle policy
+  TagValue:
+    Type: String
+    Default: 'true'
+    Description: Tag value that will exclude buckets from lifecycle policy
+  SenderEmailAddress:
+    Type: String
+    Description: Email address verified in the SES account
+    Default: 'raj10ace@gmail.com'
+  RecipientEmailAddresses:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of email addresses to receive notifications
+    Default: 'raj10ace@gmail.com'
+  SESConfigurationSetName:
+    Type: String
+    Default: 'ge-awsses-default-conf-set'
+    Description: Name of the SES configuration set in the SES account
+  SESSendingRoleArn:
+    Type: String
+    Description: ARN of the SES sending role in the SES account
+    Default: 'arn:aws:iam::xxxxxx:role/SES-cloudplatform-LambdaCrossAccount-Role'
+  SESRegion:
+    Type: String
+    Default: 'ap-southeast-2'
+    Description: Region where SES resources are deployed
+  AccountName:
+    Type: String
+    Description: 'Name of this AWS account (for report identification)'
+    Default: 'Account'
+  NotificationWaitPeriod:
+    Type: Number
+    Default: 168
+    Description: Hours to wait after notification before applying lifecycle policies (default 7 days = 168 hours)
+    MinValue: 1
+    MaxValue: 720
+  TestMode:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: If true, wait period is reduced to 60 seconds for testing
+
+Resources:
+  S3LifecycleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3LifecyclePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketTagging
+                  - s3:GetLifecycleConfiguration
+                  - s3:PutLifecycleConfiguration
+                  - s3:GetBucketLocation
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:S3LifecycleStateMachine'
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: !Ref SESSendingRoleArn
+
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !Sub '${S3LifecycleProcessFunction.Arn}*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+  S3LifecycleScanFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt S3LifecycleRole.Arn
+      Runtime: python3.12
+      Timeout: 900
+      MemorySize: 512
+      Environment:
+        Variables:
+          DRY_RUN: !Ref DryRun
+          TRANSITION_TO_IA_DAYS: !Ref TransitionToIADays
+          EXPIRATION_DAYS: !Ref ExpirationDays
+          TAG_KEY: !Ref TagKey
+          TAG_VALUE: !Ref TagValue
+          STATE_MACHINE_ARN: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:S3LifecycleStateMachine'
+          ACCOUNT_NAME: !Ref AccountName
+          NOTIFICATION_WAIT_PERIOD: !Ref NotificationWaitPeriod
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime, timezone
+          from botocore.exceptions import ClientError
+          
+          def has_matching_lifecycle_policy(s3, bucket_name, transition_days, expiration_days):
+              try:
+                  response = s3.get_bucket_lifecycle_configuration(Bucket=bucket_name)
+                  rules = response.get('Rules', [])
+                  
+                  for rule in rules:
+                      if rule.get('Status') != 'Enabled':
+                          continue
+                      
+                      # Check for IA transition
+                      transitions = rule.get('Transitions', [])
+                      has_ia_transition = any(
+                          t.get('Days') == transition_days and t.get('StorageClass') == 'STANDARD_IA'
+                          for t in transitions
+                      )
+                      
+                      # Check for expiration
+                      expiration = rule.get('Expiration', {})
+                      has_expiration = expiration.get('Days') == expiration_days
+                      
+                      # Check for non-current version expiration
+                      noncurrent_expiration = rule.get('NoncurrentVersionExpiration', {})
+                      has_noncurrent_expiration = noncurrent_expiration.get('NoncurrentDays') == expiration_days
+                      
+                      if has_ia_transition and has_expiration and has_noncurrent_expiration:
+                          return True
+                  
+                  return False
+              except ClientError as e:
+                  if e.response['Error']['Code'] == 'NoSuchLifecycleConfiguration':
+                      return False
+                  raise
+          
+          def handler(event, context):
+              s3 = boto3.client('s3')
+              states = boto3.client('stepfunctions')
+              
+              dry_run = os.environ['DRY_RUN'].lower() == 'true'
+              tag_key = os.environ['TAG_KEY']
+              tag_value = os.environ['TAG_VALUE']
+              transition_to_ia_days = int(os.environ['TRANSITION_TO_IA_DAYS'])
+              expiration_days = int(os.environ['EXPIRATION_DAYS'])
+              state_machine_arn = os.environ['STATE_MACHINE_ARN']
+              
+              print(f"Starting S3 lifecycle scan (DryRun: {dry_run})")
+              
+              try:
+                  response = s3.list_buckets()
+                  buckets = response['Buckets']
+                  print(f"Found {len(buckets)} S3 buckets")
+                  
+                  buckets_to_process = []
+                  excluded_buckets = []
+                  
+                  for bucket in buckets:
+                      bucket_name = bucket['Name']
+                      
+                      try:
+                          tags_response = s3.get_bucket_tagging(Bucket=bucket_name)
+                          tags = {tag['Key']: tag['Value'] for tag in tags_response.get('TagSet', [])}
+                          
+                          if tags.get(tag_key) == tag_value:
+                              excluded_buckets.append(bucket_name)
+                              continue
+                      except ClientError as e:
+                          if e.response['Error']['Code'] != 'NoSuchTagSet':
+                              print(f"Error getting tags for bucket {bucket_name}: {e}")
+                      
+                      # Check if bucket already has the exact lifecycle policy we want to apply
+                      if has_matching_lifecycle_policy(s3, bucket_name, transition_to_ia_days, expiration_days):
+                          print(f"Bucket {bucket_name} already has matching lifecycle policy - skipping")
+                          continue
+                      
+                      buckets_to_process.append(bucket_name)
+                  
+                  print(f"Buckets to process: {len(buckets_to_process)}")
+                  print(f"Excluded buckets: {len(excluded_buckets)}")
+                  
+                  if buckets_to_process:
+                      # Use test mode for quick testing
+                      if os.environ.get('TEST_MODE', 'false').lower() == 'true':
+                          wait_seconds = 60  # 1 minute for testing
+                      else:
+                          wait_seconds = int(os.environ.get('NOTIFICATION_WAIT_PERIOD', 168)) * 3600
+                      execution_input = {
+                          'buckets_to_process': buckets_to_process,
+                          'excluded_buckets': excluded_buckets,
+                          'transition_to_ia_days': transition_to_ia_days,
+                          'expiration_days': expiration_days,
+                          'dry_run': dry_run,
+                          'waitSeconds': wait_seconds,
+                          'timestamp': datetime.now(timezone.utc).isoformat()
+                      }
+                      
+                      print(f"State machine input: {json.dumps(execution_input, indent=2)}")
+                      print(f"Wait seconds calculated: {wait_seconds}")
+                      
+                      states.start_execution(
+                          stateMachineArn=state_machine_arn,
+                          input=json.dumps(execution_input)
+                      )
+                      
+                      return {
+                          'statusCode': 200,
+                          'body': f'Started processing for {len(buckets_to_process)} buckets'
+                      }
+                  else:
+                      return {
+                          'statusCode': 200,
+                          'body': 'No buckets require lifecycle policy updates'
+                      }
+                      
+              except Exception as e:
+                  print(f"Error in S3 lifecycle scan: {str(e)}")
+                  raise
+
+  S3LifecycleProcessFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt S3LifecycleRole.Arn
+      Runtime: python3.12
+      Timeout: 900
+      MemorySize: 512
+      Environment:
+        Variables:
+          SENDER_EMAIL_ADDRESS: !Ref SenderEmailAddress
+          RECIPIENT_EMAIL_ADDRESSES: !Join [',', !Ref RecipientEmailAddresses]
+          CONFIGURATION_SET_NAME: !Ref SESConfigurationSetName
+          SES_SENDING_ROLE_ARN: !Ref SESSendingRoleArn
+          SES_REGION: !Ref SESRegion
+          ACCOUNT_NAME: !Ref AccountName
+          NOTIFICATION_WAIT_PERIOD: !Ref NotificationWaitPeriod
+          TAG_KEY: !Ref TagKey
+          TAG_VALUE: !Ref TagValue
+          TEST_MODE: !Ref TestMode
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime, timezone
+          from botocore.exceptions import ClientError
+          from email.mime.multipart import MIMEMultipart
+          from email.mime.text import MIMEText
+          from email.mime.application import MIMEApplication
+          
+          def generate_csv_report(buckets_to_process):
+              csv_content = "Bucket Name,Region,Creation Date,Status\n"
+              s3 = boto3.client('s3')
+              
+              for bucket_name in buckets_to_process:
+                  try:
+                      location = s3.get_bucket_location(Bucket=bucket_name)
+                      region = location['LocationConstraint'] or 'us-east-1'
+                      
+                      bucket_info = s3.list_buckets()
+                      creation_date = next((b['CreationDate'].strftime('%Y-%m-%d') for b in bucket_info['Buckets'] if b['Name'] == bucket_name), 'Unknown')
+                      
+                      csv_content += f"{bucket_name},{region},{creation_date},Pending Lifecycle Policy\n"
+                  except Exception as e:
+                      csv_content += f"{bucket_name},Unknown,Unknown,Error: {str(e)[:50]}\n"
+              
+              return csv_content
+          
+          def send_email_with_attachment(subject, html_body, csv_report):
+              try:
+                  sts = boto3.client('sts')
+                  ses_role_arn = os.environ['SES_SENDING_ROLE_ARN']
+                  ses_region = os.environ['SES_REGION']
+                  
+                  assumed_role = sts.assume_role(
+                      RoleArn=ses_role_arn,
+                      RoleSessionName='S3LifecycleSESSession'
+                  )
+                  
+                  ses = boto3.client(
+                      'ses',
+                      region_name=ses_region,
+                      aws_access_key_id=assumed_role['Credentials']['AccessKeyId'],
+                      aws_secret_access_key=assumed_role['Credentials']['SecretAccessKey'],
+                      aws_session_token=assumed_role['Credentials']['SessionToken']
+                  )
+                  
+                  recipients = os.environ['RECIPIENT_EMAIL_ADDRESSES'].split(',')
+                  sender = os.environ['SENDER_EMAIL_ADDRESS']
+                  config_set = os.environ['CONFIGURATION_SET_NAME']
+                  
+                  msg = MIMEMultipart('mixed')
+                  msg['Subject'] = subject
+                  msg['From'] = sender
+                  msg['To'] = ', '.join([r.strip() for r in recipients])
+                  
+                  html_part = MIMEText(html_body, 'html')
+                  msg_alternative = MIMEMultipart('alternative')
+                  msg_alternative.attach(html_part)
+                  msg.attach(msg_alternative)
+                  
+                  csv_attachment = MIMEApplication(csv_report.encode('utf-8'))
+                  csv_attachment.add_header('Content-Disposition', 'attachment', filename='s3-buckets-report.csv')
+                  msg.attach(csv_attachment)
+                  
+                  ses.send_raw_email(
+                      Source=sender,
+                      Destinations=[r.strip() for r in recipients],
+                      RawMessage={'Data': msg.as_string()},
+                      ConfigurationSetName=config_set
+                  )
+                  
+                  print(f"Email sent successfully to {len(recipients)} recipients with CSV attachment")
+                  
+              except Exception as e:
+                  print(f"Error sending email: {str(e)}")
+                  raise
+          
+          def send_simple_email(subject, html_body):
+              try:
+                  sts = boto3.client('sts')
+                  ses_role_arn = os.environ['SES_SENDING_ROLE_ARN']
+                  ses_region = os.environ['SES_REGION']
+                  
+                  assumed_role = sts.assume_role(
+                      RoleArn=ses_role_arn,
+                      RoleSessionName='S3LifecycleSESSession'
+                  )
+                  
+                  ses = boto3.client(
+                      'ses',
+                      region_name=ses_region,
+                      aws_access_key_id=assumed_role['Credentials']['AccessKeyId'],
+                      aws_secret_access_key=assumed_role['Credentials']['SecretAccessKey'],
+                      aws_session_token=assumed_role['Credentials']['SessionToken']
+                  )
+                  
+                  recipients = os.environ['RECIPIENT_EMAIL_ADDRESSES'].split(',')
+                  sender = os.environ['SENDER_EMAIL_ADDRESS']
+                  config_set = os.environ['CONFIGURATION_SET_NAME']
+                  
+                  msg = MIMEMultipart('alternative')
+                  msg['Subject'] = subject
+                  msg['From'] = sender
+                  msg['To'] = ', '.join([r.strip() for r in recipients])
+                  
+                  html_part = MIMEText(html_body, 'html')
+                  msg.attach(html_part)
+                  
+                  ses.send_raw_email(
+                      Source=sender,
+                      Destinations=[r.strip() for r in recipients],
+                      RawMessage={'Data': msg.as_string()},
+                      ConfigurationSetName=config_set
+                  )
+                  
+                  print(f"Email sent successfully to {len(recipients)} recipients")
+                  
+              except Exception as e:
+                  print(f"Error sending email: {str(e)}")
+                  raise
+          
+          def handler(event, context):
+              action = event.get('action', 'notify')
+              buckets_to_process = event.get('buckets_to_process', [])
+              transition_to_ia_days = event.get('transition_to_ia_days', 90)
+              expiration_days = event.get('expiration_days', 180)
+              dry_run = event.get('dry_run', False)
+              account_name = os.environ['ACCOUNT_NAME']
+              
+              if action == 'notify':
+                  subject = f"S3 Lifecycle Policy Update Notification - {account_name}"
+                  
+                  html_body = f"""
+                  <html>
+                  <body>
+                      <h2>S3 Lifecycle Policy Update Notification</h2>
+                      <div style="background-color: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px;">
+                          <p><strong>Account:</strong> {account_name}</p>
+                          <p><strong>Timestamp:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+                          <p><strong>Action:</strong> {'DRY RUN - ' if dry_run else ''}Apply lifecycle policies to transition objects to IA after {transition_to_ia_days} days and expire after {expiration_days} days</p>
+                          <p><strong>Note:</strong> Lifecycle policies will be applied in {int(os.environ.get('NOTIFICATION_WAIT_PERIOD', 168)) // 24} days unless this process is cancelled.</p>
+                          <p><strong>To exclude a bucket:</strong> Add tag <code>{os.environ.get('TAG_KEY', 'LifecycleExclude')}={os.environ.get('TAG_VALUE', 'true')}</code> to the bucket before the wait period expires.</p>
+                      </div>
+                      
+                      <h3>Bucket Summary</h3>
+                      <table border="1" style="border-collapse: collapse; width: 100%; margin: 10px 0;">
+                          <tr style="background-color: #e6f3ff;">
+                              <th style="padding: 8px; text-align: left;">Category</th>
+                              <th style="padding: 8px; text-align: center;">Count</th>
+                          </tr>
+                          <tr>
+                              <td style="padding: 8px;">Buckets to be Updated</td>
+                              <td style="padding: 8px; text-align: center;">{len(buckets_to_process)}</td>
+                          </tr>
+                      </table>
+                      
+                      <p><strong>Detailed bucket information is attached as CSV file.</strong></p>
+                  </body>
+                  </html>
+                  """
+                  
+                  csv_report = generate_csv_report(buckets_to_process)
+                  send_email_with_attachment(subject, html_body, csv_report)
+                  
+                  # Return original input data for next state with TestMode support
+                  if os.environ.get('TEST_MODE', 'false').lower() == 'true':
+                      wait_seconds = 60  # 1 minute for testing
+                  else:
+                      wait_seconds = event.get('waitSeconds', 604800)
+                  
+                  return {
+                      'buckets_to_process': buckets_to_process,
+                      'transition_to_ia_days': transition_to_ia_days,
+                      'expiration_days': expiration_days,
+                      'dry_run': dry_run,
+                      'waitSeconds': wait_seconds,
+                      'notification_sent': True
+                  }
+              
+              elif action == 'apply_lifecycle':
+                  s3 = boto3.client('s3')
+                  processed_buckets = []
+                  failed_buckets = []
+                  
+                  lifecycle_config = {
+                      'Rules': [
+                          {
+                              'ID': 'TransitionAndExpireObjects',
+                              'Status': 'Enabled',
+                              'Filter': {},
+                              'Transitions': [
+                                  {
+                                      'Days': transition_to_ia_days,
+                                      'StorageClass': 'STANDARD_IA'
+                                  }
+                              ],
+                              'Expiration': {'Days': expiration_days},
+                              'NoncurrentVersionExpiration': {'NoncurrentDays': expiration_days}
+                          }
+                      ]
+                  }
+                  
+                  for bucket_name in buckets_to_process:
+                      try:
+                          if not dry_run:
+                              s3.put_bucket_lifecycle_configuration(
+                                  Bucket=bucket_name,
+                                  LifecycleConfiguration=lifecycle_config
+                              )
+                          processed_buckets.append(bucket_name)
+                          print(f"{'[DRY RUN] ' if dry_run else ''}Applied lifecycle policy to bucket: {bucket_name}")
+                      except Exception as e:
+                          failed_buckets.append(bucket_name)
+                          print(f"Failed to apply lifecycle policy to bucket {bucket_name}: {str(e)}")
+                  
+                  subject = f"S3 Lifecycle Policy Update Complete - {account_name}"
+                  
+                  html_body = f"""
+                  <html>
+                  <body>
+                      <h2>S3 Lifecycle Policy Update Complete</h2>
+                      <p><strong>Account:</strong> {account_name}</p>
+                      <p><strong>Timestamp:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+                      <p><strong>Mode:</strong> {'DRY RUN' if dry_run else 'LIVE'}</p>
+                      
+                      <h3>Summary:</h3>
+                      <ul>
+                          <li>Successfully processed: {len(processed_buckets)} buckets</li>
+                          <li>Failed: {len(failed_buckets)} buckets</li>
+                      </ul>
+                      
+                      {f'<h3>Failed Buckets:</h3><ul>{"".join([f"<li>{bucket}</li>" for bucket in failed_buckets])}</ul>' if failed_buckets else ''}
+                  </body>
+                  </html>
+                  """
+                  
+                  send_simple_email(subject, html_body)
+                  
+                  return {'statusCode': 200, 'body': f'Processed {len(processed_buckets)} buckets, {len(failed_buckets)} failed'}
+
+  S3LifecycleStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: S3LifecycleStateMachine
+      RoleArn: !GetAtt StepFunctionsExecutionRole.Arn
+      LoggingConfiguration:
+        Level: ERROR
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt S3LifecycleStateMachineLogGroup.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "S3 Lifecycle Policy State Machine with notification and wait period",
+          "StartAt": "SendNotification",
+          "States": {
+            "SendNotification": {
+              "Type": "Task",
+              "Resource": "${S3LifecycleProcessFunction.Arn}",
+              "Parameters": {
+                "action": "notify",
+                "buckets_to_process.$": "$.buckets_to_process",
+                "transition_to_ia_days.$": "$.transition_to_ia_days",
+                "expiration_days.$": "$.expiration_days",
+                "dry_run.$": "$.dry_run"
+              },
+              "Next": "WaitPeriod"
+            },
+            "WaitPeriod": {
+              "Type": "Wait",
+              "SecondsPath": "$.waitSeconds",
+              "Next": "ApplyLifecyclePolicies"
+            },
+            "ApplyLifecyclePolicies": {
+              "Type": "Task",
+              "Resource": "${S3LifecycleProcessFunction.Arn}",
+              "Parameters": {
+                "action": "apply_lifecycle",
+                "buckets_to_process.$": "$.buckets_to_process",
+                "transition_to_ia_days.$": "$.transition_to_ia_days",
+                "expiration_days.$": "$.expiration_days",
+                "dry_run.$": "$.dry_run"
+              },
+              "End": true
+            }
+          }
+        }
+
+  S3LifecycleScanLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${S3LifecycleScanFunction}'
+      RetentionInDays: 5
+
+  S3LifecycleProcessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${S3LifecycleProcessFunction}'
+      RetentionInDays: 5
+
+  S3LifecycleStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: '/aws/stepfunctions/S3LifecycleStateMachine'
+      RetentionInDays: 5
+
+  S3LifecycleScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: 'Trigger S3 lifecycle cleanup automation'
+      ScheduleExpression: !Ref ScheduleExpression
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt S3LifecycleScanFunction.Arn
+          Id: S3LifecycleScanTarget
+
+  S3LifecycleScanPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref S3LifecycleScanFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt S3LifecycleScheduleRule.Arn
+
+Outputs:
+  S3LifecycleScanFunctionArn:
+    Description: 'ARN of the S3 Lifecycle Scan Lambda Function'
+    Value: !GetAtt S3LifecycleScanFunction.Arn
+  
+  S3LifecycleProcessFunctionArn:
+    Description: 'ARN of the S3 Lifecycle Process Lambda Function'
+    Value: !GetAtt S3LifecycleProcessFunction.Arn
+  
+  StateMachineArn:
+    Description: 'ARN of the S3 Lifecycle State Machine'
+    Value: !GetAtt S3LifecycleStateMachine.Arn

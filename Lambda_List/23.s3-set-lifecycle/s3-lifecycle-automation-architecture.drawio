@@ -1,0 +1,171 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0" version="28.0.3">
+  <diagram name="S3-Lifecycle-Automation" id="S3-Lifecycle-Automation">
+    <mxGraphModel dx="1426" dy="779" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="aws-cloud" value="" style="sketch=0;outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud;strokeColor=#232F3E;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#232F3E;dashed=0;" parent="1" vertex="1">
+          <mxGeometry x="30" y="10" width="1090" height="770" as="geometry" />
+        </mxCell>
+        <mxCell id="title" value="S3 Lifecycle Automation with Email Notifications" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="420" y="20" width="400" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="eventbridge" value="EventBridge&#xa;(Scheduler)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" parent="1" vertex="1">
+          <mxGeometry x="70" y="230" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="lambda-scan" value="Lambda Function&#xa;(S3 Scan)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="170" y="62" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-buckets" value="S3 Buckets&#xa;(Multiple)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#60A337;gradientDirection=north;fillColor=#277116;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.s3;" parent="1" vertex="1">
+          <mxGeometry x="600" y="130" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="step-functions" value="Step Functions&#xa;(State Machine)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#FF4F8B;gradientDirection=north;fillColor=#BC1356;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.step_functions;" parent="1" vertex="1">
+          <mxGeometry x="350" y="250" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="lambda-process" value="Lambda Function&#xa;(Process &amp; Email)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F78E04;gradientDirection=north;fillColor=#D05C17;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" parent="1" vertex="1">
+          <mxGeometry x="660" y="370" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="ses" value="SES&#xa;(Email Service)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#945DF2;gradientDirection=north;fillColor=#5A30B5;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.ses;" parent="1" vertex="1">
+          <mxGeometry x="930" y="270" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="iam-role1" value="IAM Role&#xa;(Lambda Execution)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F54749;gradientDirection=north;fillColor=#C7131F;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.iam_role;" parent="1" vertex="1">
+          <mxGeometry x="80" y="380" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="iam-role2" value="IAM Role&#xa;(Step Functions)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F54749;gradientDirection=north;fillColor=#C7131F;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.iam_role;" parent="1" vertex="1">
+          <mxGeometry x="280" y="380" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="cloudwatch-logs" value="CloudWatch Logs&#xa;(Function Logs)" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0],[0,0.25,0],[0,0.5,0],[0,0.75,0],[1,0.25,0],[1,0.5,0],[1,0.75,0]];outlineConnect=0;fontColor=#232F3E;gradientColor=#F54749;gradientDirection=north;fillColor=#C7131F;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.cloudwatch_logs;" parent="1" vertex="1">
+          <mxGeometry x="930" y="62" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="email-users" value="Email Recipients&#xa;(Stakeholders)" style="sketch=0;outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#232F3D;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.users;" parent="1" vertex="1">
+          <mxGeometry x="1030" y="490" width="78" height="78" as="geometry" />
+        </mxCell>
+        <mxCell id="arrow1" value="Cron Schedule&#xa;(Weekly)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#FF6B35;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="eventbridge" target="lambda-scan" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="arrow2" value="List &amp; Analyze&#xa;Buckets" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4A90E2;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="lambda-scan" target="s3-buckets" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="530" y="101" />
+              <mxPoint x="530" y="169" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow3" value="Start State&#xa;Machine" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#7B68EE;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="lambda-scan" target="step-functions" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="370" y="130" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow4" value="Send Notification" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#50C878;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="step-functions" target="lambda-process" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="680" y="270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow5" value="Send Email&#xa;with CSV" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#FF1493;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="lambda-process" target="ses" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="969" y="440" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow6" value="Notification&#xa;Email" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#FFA500;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="ses" target="email-users" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="arrow7" value="Wait Period&#xa;(7 days / 60s test)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#DAA520;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="step-functions" target="step-functions" edge="1">
+          <mxGeometry x="0.2" relative="1" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="389" y="240" />
+              <mxPoint x="600" y="240" />
+              <mxPoint x="600" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow8" value="Apply Lifecycle&#xa;Policies" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#32CD32;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="step-functions" target="lambda-process" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="519" y="300" />
+              <mxPoint x="519" y="420" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow9" value="Set Lifecycle&#xa;Rules" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#FF4500;strokeWidth=3;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="lambda-process" target="s3-buckets" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="719" y="170" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow10" value="Function Logs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#778899;strokeWidth=2;dashed=1;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="lambda-scan" target="cloudwatch-logs" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="590" y="80" />
+              <mxPoint x="590" y="80" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="arrow11" value="Function Logs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#778899;strokeWidth=2;dashed=1;fontColor=#232F3E;labelBackgroundColor=#ffffff;flowAnimation=1;" parent="1" source="lambda-process" target="cloudwatch-logs" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="770" y="409" />
+              <mxPoint x="770" y="220" />
+              <mxPoint x="969" y="220" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#dee2e6;strokeWidth=2;" parent="1" vertex="1">
+          <mxGeometry x="80" y="540" width="880" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="legend-title" value="Process Flow Legend" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="480" y="550" width="200" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="legend1" value="1. EventBridge triggers Lambda weekly (cron)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="100" y="580" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend2" value="2. Lambda scans all S3 buckets for lifecycle policies" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="100" y="600" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend3" value="3. Lambda starts Step Functions state machine" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="100" y="620" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend4" value="4. Process function sends notification email with CSV" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="100" y="640" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend5" value="5. Step Functions waits (7 days or 60s test mode)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="100" y="660" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend6" value="6. Process function applies lifecycle policies to S3" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="100" y="680" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend7" value="7. Completion notification sent to stakeholders" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="100" y="700" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="features-title" value="Key Features:" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=1;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="500" y="580" width="100" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="feature1" value="• Automated S3 lifecycle policy management" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="520" y="600" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="feature2" value="• Email notifications with CSV attachments" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="520" y="620" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="feature3" value="• Tag-based exclusion (LifecycleExclude=true)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="520" y="640" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="feature4" value="• Dry-run mode for testing" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="520" y="660" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="feature5" value="• Configurable wait periods and policies" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="520" y="680" width="280" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="feature6" value="• Cross-account SES support" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#232F3E;" parent="1" vertex="1">
+          <mxGeometry x="520" y="700" width="280" height="20" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
