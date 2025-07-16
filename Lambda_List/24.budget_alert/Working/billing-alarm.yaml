@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFormation template to set up a CloudWatch Billing Alarm with SNS notification
+
+Parameters:
+  AlarmThreshold:
+    Type: Number
+    Default: 100
+    Description: Estimated charges threshold in USD
+
+  NotificationEmail:
+    Type: String
+    Description: Email address to receive billing alert notifications
+
+Resources:
+
+  BillingAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Billing Alert Topic
+
+  BillingAlarmSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+      TopicArn: !Ref BillingAlarmTopic
+
+  BillingAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: EstimatedChargesAlarm
+      AlarmDescription: 'Alarm when estimated charges exceed threshold'
+      Namespace: AWS/Billing
+      MetricName: EstimatedCharges
+      Dimensions:
+        - Name: Currency
+          Value: USD
+      Statistic: Maximum
+      Period: 21600                # 6 hours
+      EvaluationPeriods: 1
+      Threshold: !Ref AlarmThreshold
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref BillingAlarmTopic

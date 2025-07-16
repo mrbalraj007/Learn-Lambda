@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to create the IAM role that will be restricted by budget actions'
+
+Resources:
+  # IAM Role that users/applications will use for EC2 operations
+  # This role will be restricted when budget limits are exceeded
+  EC2UserRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: 'EC2UserRestrictedRole'
+      Description: 'Role for EC2 operations that will be restricted when budget thresholds are exceeded'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+              # You can also allow specific AWS accounts or IAM users to assume this role
+              # AWS: 
+              #   - 'arn:aws:iam::ACCOUNT_ID:user/USERNAME'
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonEC2FullAccess'
+      # You can add inline policies as needed
+      Policies:
+        - PolicyName: 'EC2RunInstancesPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ec2:RunInstances'
+                  - 'ec2:CreateTags'
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:StartInstances'
+                  - 'ec2:StopInstances'
+                  - 'ec2:TerminateInstances'
+                Resource: '*'
+      Path: '/'
+      Tags:
+        - Key: Purpose
+          Value: BudgetRestrictedRole
+
+Outputs:
+  RoleName:
+    Description: 'Name of the IAM role for EC2 operations'
+    Value: !Ref EC2UserRole
+    Export:
+      Name: !Sub '${AWS::StackName}-RoleName'
+
+  RoleArn:
+    Description: 'ARN of the IAM role for EC2 operations'
+    Value: !GetAtt EC2UserRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RoleArn'
