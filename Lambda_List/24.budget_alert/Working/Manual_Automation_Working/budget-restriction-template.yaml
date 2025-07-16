@@ -1,27 +1,27 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudFormation template to restrict EC2 instances to t3.micro when budget is exceeded'
+Description: 'CloudFormation template to restrict EC2 instances to t3.micro when budget is exceeded (without BudgetAction)'
 
 Parameters:
   BudgetLimit:
     Type: Number
     Default: 100
     Description: The budget limit amount in USD
-  
+
   BudgetName:
     Type: String
     Default: 'MonthlyBudget'
     Description: Name of the budget
-  
+
   EmailAddress:
     Type: String
     Description: Email address to receive budget notifications
-    
+
   TargetIAMRole:
     Type: String
+    Default: 'EC2UserRestrictedRole'
     Description: The IAM role to which the restrictive policy will be applied
 
 Resources:
-  # IAM Role that will be used by the budget action
   BudgetActionRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -32,10 +32,41 @@ Resources:
             Principal:
               Service: budgets.amazonaws.com
             Action: 'sts:AssumeRole'
-      ManagedPolicyArns:
-        - 'arn:aws:iam::aws:policy/AWSBudgetsActions-RolePolicyForResourceAdministrationWithSSM'
+      Policies:
+        - PolicyName: 'BudgetActionPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:DetachRolePolicy'
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${TargetIAMRole}'
+              - Effect: 'Allow'
+                Action:
+                  - 'iam:AttachGroupPolicy'
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:AttachUserPolicy'
+                  - 'iam:CreatePolicy'
+                  - 'iam:CreatePolicyVersion'
+                  - 'iam:DeletePolicy'
+                  - 'iam:DeletePolicyVersion'
+                  - 'iam:DetachGroupPolicy' 
+                  - 'iam:DetachRolePolicy'
+                  - 'iam:DetachUserPolicy'
+                  - 'iam:ListAttachedGroupPolicies'
+                  - 'iam:ListAttachedRolePolicies'
+                  - 'iam:ListAttachedUserPolicies'
+                  - 'iam:ListPolicies'
+                  - 'iam:ListPolicyVersions'
+                  - 'iam:SetDefaultPolicyVersion'
+                Resource: '*'
+              - Effect: 'Allow'
+                Action:
+                  - 'ssm:GetParameters'
+                  - 'ssm:GetParameter'
+                Resource: '*'
 
-  # IAM Policy that restricts EC2 instances to only t3.micro
   EC2RestrictPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
@@ -44,7 +75,7 @@ Resources:
         Version: '2012-10-17'
         Statement:
           - Effect: 'Allow'
-            Action: 
+            Action:
               - 'ec2:RunInstances'
             Resource: 'arn:aws:ec2:*:*:instance/*'
             Condition:
@@ -70,8 +101,7 @@ Resources:
               - 'ec2:Describe*'
               - 'ec2:Get*'
             Resource: '*'
-  
-  # Budget resource
+
   MonthlyBudget:
     Type: 'AWS::Budgets::Budget'
     Properties:
@@ -90,31 +120,27 @@ Resources:
           Subscribers:
             - SubscriptionType: EMAIL
               Address: !Ref EmailAddress
-
-  # Budget action to apply the IAM policy when budget is exceeded
-  BudgetAction:
-    Type: 'AWS::Budgets::BudgetAction'
-    Properties:
-      ActionType: APPLY_IAM_POLICY
-      BudgetName: !Ref BudgetName
-      ExecutionRoleArn: !GetAtt BudgetActionRole.Arn
-      ApprovalModel: AUTOMATIC
-      ActionThreshold:
-        Value: 100
-        Type: PERCENTAGE
-      Definition:
-        IamActionDefinition:
-          PolicyArn: !Ref EC2RestrictPolicy
-          Roles:
-            - !Ref TargetIAMRole
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref EmailAddress
 
 Outputs:
   BudgetName:
     Description: 'Name of the created budget'
     Value: !Ref BudgetName
+
   BudgetLimit:
     Description: 'Budget limit in USD'
     Value: !Ref BudgetLimit
+
   RestrictedPolicyArn:
     Description: 'ARN of the policy restricting EC2 instances'
     Value: !Ref EC2RestrictPolicy
+
+  BudgetActionRoleArn:
+    Description: 'ARN of the role used for budget actions'
+    Value: !GetAtt BudgetActionRole.Arn

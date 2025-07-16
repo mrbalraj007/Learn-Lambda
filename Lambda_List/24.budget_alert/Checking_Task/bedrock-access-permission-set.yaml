@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to create a Permission Set in IAM Identity Center for Bedrock access'
+
+Resources:
+  BedrockAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: 'Allows access to AWS Bedrock services'
+      ManagedPolicyName: BedrockAccessPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:Converse
+              - bedrock:ListFoundationModels
+            Resource: '*'
+  
+  BedrockPermissionSet:
+    Type: AWS::SSO::PermissionSet
+    Properties:
+      Name: BedrockAccess
+      Description: 'Permission set for accessing AWS Bedrock services'
+      InstanceArn: !Sub 'arn:aws:sso:::instance/${AWS::SSO::InstanceAccessControlAttributeConfiguration}'
+      SessionDuration: PT12H
+      ManagedPolicies:
+        - !Ref BedrockAccessPolicy
+
+  # Assignment of permission set to deployment-tools account will be done via console or additional CFN template
+  # AD group creation and mapping will be handled by AD team
