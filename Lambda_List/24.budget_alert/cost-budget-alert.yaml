@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AWS CloudFormation Template to set up a monthly cost budget with SNS alert.
+
+Parameters:
+  BudgetLimit:
+    Type: Number
+    Default: 100
+    Description: Monthly cost budget limit in USD
+
+  NotificationEmail:
+    Type: String
+    Description: Email to receive budget alerts
+
+Resources:
+
+  CostAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Cost Budget Alert Topic
+
+  CostAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+      TopicArn: !Ref CostAlertTopic
+
+  MonthlyCostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: MonthlyCostBudget
+        BudgetLimit:
+          Amount: !Ref BudgetLimit
+          Unit: USD
+        BudgetType: COST
+        TimeUnit: MONTHLY
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref CostAlertTopic
