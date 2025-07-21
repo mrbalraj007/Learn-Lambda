@@ -202,6 +202,31 @@ nano ec2_instances.csv
 
 ---
 
+<!-- # AWS EC2 Backup with AWS Backup CLI
+
+This guide provides useful AWS CLI commands for managing EC2 backups using AWS Backup. Follow the steps below to get IAM role ARNs, start backup jobs, and monitor backup status.
+
+--- -->
+
+
+### Get IAM Role ARN
+
+To retrieve the ARN for your AWS Backup roles:
+
+```bash
+aws iam get-role --role-name AWSBackupDefaultServiceRole --query 'Role.Arn' --output text
+```
+
+Or for a custom role:
+
+```bash
+aws iam get-role --role-name AWSBackupEC2Role --query 'Role.Arn' --output text
+```
+
+Use the resulting ARN in your Bash scripts as `IAM_ROLE_ARN`.
+
+---
+
 ## 🚀 Usage
 
 ### 🎯 **Basic Execution**
@@ -255,6 +280,101 @@ nano ec2_instances.csv
 [2025-07-18 21:10:56] ✅ Backup job started successfully for i-022bf7d6ddcf31ddc
 [2025-07-18 21:10:56]    📋 Job ID: 12345678-1234-1234-1234-123456789012
 ```
+
+
+## Monitor Backup Jobs
+
+### Get the Status of a Backup Job
+
+Once a backup job is submitted, monitor its status with:
+
+```bash
+aws backup describe-backup-job --backup-job-id <backup-job-id>
+```
+Replace `<backup-job-id>` with your actual job ID.
+
+
+### List All Backup Jobs for a Vault
+
+```bash
+aws backup list-backup-jobs \
+  --by-backup-vault-name "EC2-Backup" \
+  --query 'BackupJobs[*].{JobId:BackupJobId,Resource:ResourceArn,Status:State,CreatedAt:CreationDate}' \
+  --output table
+```
+
+### List Only Recent Jobs (Last 24 Hours)
+
+```bash
+aws backup list-backup-jobs \
+  --by-backup-vault-name "EC2-Backup" \
+  --by-created-after "$(date -u -d '-1 day' +%Y-%m-%dT%H:%M:%SZ)" \
+  --query 'BackupJobs[*].{JobId:BackupJobId,Resource:ResourceArn,Status:State,CreatedAt:CreationDate}' \
+  --output table
+```
+
+---
+
+### Export Backup Jobs to CSV
+
+#### Option 1: Export All Jobs
+
+```bash
+aws backup list-backup-jobs \
+  --by-backup-vault-name "EC2-Backup" \
+  --query 'BackupJobs[*].[BackupJobId,ResourceArn,State,CreationDate]' \
+  --output text | \
+  awk 'BEGIN {print "JobId,Resource,Status,CreatedAt"} {print $1","$2","$3","$4}' \
+  > backup_jobs.csv
+```
+---
+
+## Advanced Queries
+
+### Get Last 6 Backup Jobs (Most Recent)
+
+```bash
+aws backup list-backup-jobs \
+  --by-backup-vault-name "EC2-Backup" \
+  --query 'reverse(sort_by(BackupJobs, &CreationDate))[:6].{JobId:BackupJobId,Resource:ResourceArn,Status:State,CreatedAt:CreationDate}' \
+  --output table
+```
+*Gets the last 6 jobs, sorted by creation time (descending).*
+
+---
+
+### Get Jobs from the Last 6 Hours (CSV Output)
+
+```bash
+aws backup list-backup-jobs \
+  --by-backup-vault-name "EC2-Backup" \
+  --by-created-after "$(date -u -d '-6 hours' +%Y-%m-%dT%H:%M:%SZ)" \
+  --query 'BackupJobs[*].[BackupJobId,ResourceArn,State,CreationDate]' \
+  --output text | \
+  awk 'BEGIN {print "JobId,Resource,Status,CreatedAt"} {print $1","$2","$3","$4}' \
+  > last_6_hours_backup_jobs.csv
+```
+*Filters jobs created in the last 6 hours and saves results to `last_6_hours_backup_jobs.csv`.*
+
+---
+
+### Bonus: Get Jobs from the Last 24 Hours (CSV Output)
+
+```bash
+aws backup list-backup-jobs \
+  --by-backup-vault-name "EC2-Backup" \
+  --by-created-after "$(date -u -d '-1 day' +%Y-%m-%dT%H:%M:%SZ)" \
+  --query 'BackupJobs[*].[BackupJobId,ResourceArn,State,CreationDate]' \
+  --output text | \
+  awk 'BEGIN {print "JobId,Resource,Status,CreatedAt"} {print $1","$2","$3","$4}' \
+  > last_24_hours_backup_jobs.csv
+```
+---
+
+## Notes
+
+- Replace `"EC2-Backup"` with your actual backup vault name.
+- You can open the `.csv` files in Excel or import them into dashboards for further analysis.
 
 ### 📈 **Summary Report**
 
@@ -380,127 +500,7 @@ graph LR
 </div>
 
 
-aws iam get-role --role-name AWSBackupDefaultServiceRole --query 'Role.Arn' --output text
-
-Get the IAM Role ARN
-bash
-Copy
-Edit
-aws iam get-role --role-name AWSBackupEC2Role --query 'Role.Arn' --output text
-Use this ARN in your Bash script for IAM_ROLE_ARN.
-
-Optional: Get the status of a backup job
-Once submitted, you can monitor it with:
-
-bash
-Copy
-Edit
-aws backup describe-backup-job --backup-job-id 7CD5B65A-8444-01F7-FB6D-96E26641DF7F
 
 
 
 
-List All Backup Jobs for a Vault
-bash
-Copy
-Edit
-aws backup list-backup-jobs \
-  --by-backup-vault-name "EC2-Backup" \
-  --query 'BackupJobs[*].{JobId:BackupJobId,Resource:ResourceArn,Status:State,CreatedAt:CreationDate}' \
-  --output table
-  
- Want to list only recent jobs?
-Limit it to the last 24 hours:
-
-bash
-Copy
-Edit
-aws backup list-backup-jobs \
-  --by-backup-vault-name "EC2-Backup" \
-  --by-created-after "$(date -u -d '-1 day' +%Y-%m-%dT%H:%M:%SZ)" \
-  --query 'BackupJobs[*].{JobId:BackupJobId,Resource:ResourceArn,Status:State,CreatedAt:CreationDate}' \
-  --output table  
-  
-
-Option 1: Export to CSV using --output text + awk
-bash
-Copy
-Edit
-aws backup list-backup-jobs \
-  --by-backup-vault-name "EC2-Backup" \
-  --query 'BackupJobs[*].[BackupJobId,ResourceArn,State,CreationDate]' \
-  --output text | \
-  awk 'BEGIN {print "JobId,Resource,Status,CreatedAt"} {print $1","$2","$3","$4}' \
-  > backup_jobs.csv
----------------
-
-
-
-**************************
-✅ Start Backup Job for an EC2 Instance
-bash
-Copy
-Edit
-aws backup start-backup-job \
-  --backup-vault-name "EC2-Backup" \
-  --resource-arn "arn:aws:ec2:us-east-1::instance/i-0b19d4e150c8fca6e" \
-  --iam-role-arn "arn:aws:iam::373160674113:role/service-role/AWSBackupDefaultServiceRole" \
-  --idempotency-token "$(uuidgen)" \
-  --backup-job-name "EC2-Backup-$(date +%Y%m%d%H%M%S)"
-
-
-aws backup start-backup-job \
-  --backup-vault-name "EC2-Backup" \
-  --resource-arn "arn:aws:ec2:us-east-1::instance/i-0b19d4e150c8fca6e" \
-  --iam-role-arn "arn:aws:iam::373160674113:role/service-role/AWSBackupDefaultServiceRole" \
-  --idempotency-token "$(uuidgen)" \
-  --backup-job-name "EC2-Backup-$(date +%Y%m%d%H%M%S)"
-
-  
-🧩 Replace Placeholders:
-Placeholder	Description
-<region>	e.g. ap-southeast-2, us-east-1
-<instance-id>	e.g. i-0abcd1234efgh5678
-<account-id>	Your 12-digit AWS Account ID
-MyEC2BackupVault	Replace with your actual backup vault name
-AWSBackupEC2Role	The IAM role you created for AWS Backup
-
-********
-✅ 1. Get Last 6 Backup Jobs (Most Recent)
-bash
-Copy
-Edit
-aws backup list-backup-jobs \
-  --by-backup-vault-name "EC2-Backup" \
-  --query 'reverse(sort_by(BackupJobs, &CreationDate))[:6].{JobId:BackupJobId,Resource:ResourceArn,Status:State,CreatedAt:CreationDate}' \
-  --output table
-🔍 This gets the last 6 jobs, sorted by creation time in descending order.
-
-✅ 2. Get Jobs from the Last 6 Hours (CSV Output)
-bash
-Copy
-Edit
-aws backup list-backup-jobs \
-  --by-backup-vault-name "EC2-Backup" \
-  --by-created-after "$(date -u -d '-6 hours' +%Y-%m-%dT%H:%M:%SZ)" \
-  --query 'BackupJobs[*].[BackupJobId,ResourceArn,State,CreationDate]' \
-  --output text | \
-  awk 'BEGIN {print "JobId,Resource,Status,CreatedAt"} {print $1","$2","$3","$4}' \
-  > last_6_hours_backup_jobs.csv
-⏱ This filters jobs created in the last 6 hours and saves results to last_6_hours_backup_jobs.csv.
-
-🎁 Bonus: Get Jobs from the Last 24 Hours (CSV Output)
-bash
-Copy
-Edit
-aws backup list-backup-jobs \
-  --by-backup-vault-name "EC2-Backup" \
-  --by-created-after "$(date -u -d '-1 day' +%Y-%m-%dT%H:%M:%SZ)" \
-  --query 'BackupJobs[*].[BackupJobId,ResourceArn,State,CreationDate]' \
-  --output text | \
-  awk 'BEGIN {print "JobId,Resource,Status,CreatedAt"} {print $1","$2","$3","$4}' \
-  > last_24_hours_backup_jobs.csv
-📎 Notes:
-Make sure you replace "MyEC2BackupVault" with your actual vault name.
-
-You can open the .csv files in Excel or import into dashboards.  
