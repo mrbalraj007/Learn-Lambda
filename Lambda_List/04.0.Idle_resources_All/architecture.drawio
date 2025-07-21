@@ -1,6 +1,6 @@
-<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/27.0.2 Chrome/134.0.6998.205 Electron/35.3.0 Safari/537.36" version="27.0.2">
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/27.0.9 Chrome/134.0.6998.205 Electron/35.4.0 Safari/537.36" version="27.0.9">
   <diagram id="idle-resources-architecture" name="Idle Resources Architecture">
-    <mxGraphModel dx="1388" dy="756" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+    <mxGraphModel dx="1426" dy="907" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -94,7 +94,7 @@
         <mxCell id="lambda_functions_label" value="Lambda Functions" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="scanned_resources_section" vertex="1">
           <mxGeometry x="270" y="240" width="110" height="20" as="geometry" />
         </mxCell>
-        <mxCell id="-xKElnmR4kTcamzu59vm-1" value="" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#BF0816;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.role;" vertex="1" parent="scanned_resources_section">
+        <mxCell id="-xKElnmR4kTcamzu59vm-1" value="" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;fillColor=#BF0816;strokeColor=none;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;pointerEvents=1;shape=mxgraph.aws4.role;" parent="scanned_resources_section" vertex="1">
           <mxGeometry x="160" y="185" width="60" height="60" as="geometry" />
         </mxCell>
         <mxCell id="flow_section" value="Execution Flow" style="fillColor=#e1d5e7;strokeColor=#9673a6;dashed=1;verticalAlign=top;align=left;spacingLeft=10;fontSize=14;container=1;collapsible=0;points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];fontStyle=1" parent="1" vertex="1">
@@ -145,7 +145,7 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="conn3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=none;startFill=0;endArrow=classic;endFill=1;strokeWidth=2;strokeColor=#FF9900;flowAnimation=1;curved=1;" parent="1" edge="1" target="lambda">
+        <mxCell id="conn3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=none;startFill=0;endArrow=classic;endFill=1;strokeWidth=2;strokeColor=#FF9900;flowAnimation=1;curved=1;" parent="1" target="lambda" edge="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="149.9732381801963" y="437" as="sourcePoint" />
             <mxPoint x="290" y="260" as="targetPoint" />
@@ -154,7 +154,7 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="conn4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=none;startFill=0;endArrow=classic;endFill=1;strokeWidth=2;strokeColor=#FF9900;flowAnimation=1;curved=1;" parent="1" edge="1" target="lambda">
+        <mxCell id="conn4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=none;startFill=0;endArrow=classic;endFill=1;strokeWidth=2;strokeColor=#FF9900;flowAnimation=1;curved=1;" parent="1" target="lambda" edge="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="232.0000000000001" y="436.01" as="sourcePoint" />
             <mxPoint x="349" y="156.01" as="targetPoint" />
