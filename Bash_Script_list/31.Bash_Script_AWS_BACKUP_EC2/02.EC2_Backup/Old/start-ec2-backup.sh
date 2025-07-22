@@ -4,7 +4,6 @@
 CSV_FILE="ec2_instances.csv"            # CSV file with instance_id column
 BACKUP_VAULT_NAME="EC2-Backup"          # Change to your vault name
 IAM_ROLE_ARN="arn:aws:iam::373160674113:role/service-role/AWSBackupDefaultServiceRole"  # IAM role used for backup
-RETENTION=7                             # Retention period in days
 LOG_FILE="backup_log_$(date +%F_%T).log"
 REGION=$(aws configure get region)      # Get current AWS region
 
@@ -45,14 +44,13 @@ start_backup() {
   log "Starting backup for instance: $INSTANCE_ID"
   log "Resource ARN: $RESOURCE_ARN"
 
-  # Start backup job with lifecycle management
+  # Start backup job without lifecycle management (EC2 doesn't support cold storage)
   ERROR_OUTPUT=$(mktemp)
   BACKUP_JOB_ID=$(aws backup start-backup-job \
     --backup-vault-name "$BACKUP_VAULT_NAME" \
     --resource-arn "$RESOURCE_ARN" \
     --iam-role-arn "$IAM_ROLE_ARN" \
     --idempotency-token "$INSTANCE_ID-$(date +%s)" \
-    --lifecycle DeleteAfterDays=$RETENTION \
     --recovery-point-tags "InstanceId=$INSTANCE_ID,BackupType=Automated,CreatedBy=BackupScript" \
     --query 'BackupJobId' --output text 2>"$ERROR_OUTPUT")
 
@@ -62,7 +60,7 @@ start_backup() {
     log "✅ Backup job started successfully for $INSTANCE_ID"
     log "   Job ID: $BACKUP_JOB_ID"
     log "   Backup will include all attached EBS volumes"
-    log "   Retention: $RETENTION days"
+    log "   Retention: According to backup vault policy"
     rm -f "$ERROR_OUTPUT"
     return 0
   else
