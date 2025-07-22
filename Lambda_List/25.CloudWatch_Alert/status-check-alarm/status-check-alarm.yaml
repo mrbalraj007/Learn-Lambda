@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation to create CloudWatch StatusCheckFailed alarm for an EC2 instance
+
+Parameters:
+  EC2InstanceId:
+    Type: String
+    Description: EC2 Instance ID to monitor
+  AlarmNotificationTopicARN:
+    Type: String
+    Description: SNS topic ARN to notify when alarm is triggered
+
+Resources:
+  StatusCheckFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "EC2-${EC2InstanceId}-StatusCheckFailed"
+      AlarmDescription: "Status Check Failed. Please Check"
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2InstanceId
+      Statistic: Average
+      Period: 60  # 1 minute
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AlarmNotificationTopicARN
+      OKActions:
+        - !Ref AlarmNotificationTopicARN
+      InsufficientDataActions:
+        - !Ref AlarmNotificationTopicARN
+
+Outputs:
+  AlarmName:
+    Description: Name of the CloudWatch Alarm
+    Value: !Ref StatusCheckFailedAlarm
