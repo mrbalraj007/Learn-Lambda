@@ -89,10 +89,6 @@ echo "Account Name: $ACCOUNT_NAME"
 echo "Fetching EC2 instances in region ${REGION}..."
 INSTANCES_JSON=$(aws ec2 describe-instances --region "$REGION" --output json)
 
-# Get instance status for all instances
-echo "Fetching EC2 instance statuses..."
-INSTANCE_STATUS_JSON=$(aws ec2 describe-instance-status --region "$REGION" --output json)
-
 # Get alarm status for each instance
 echo "Fetching CloudWatch alarms for EC2 instances..."
 ALARMS_JSON=$(aws cloudwatch describe-alarms --region "$REGION" --output json)
@@ -106,7 +102,7 @@ echo "Discovering all unique tags across instances..."
 ALL_TAGS=$(echo "$INSTANCES_JSON" | jq -r '.Reservations[].Instances[].Tags[]?.Key' | sort -u)
 
 # Create header row for CSV with instance details and tags
-HEADER="InstanceId,InstanceName,PublicIP,PrivateIP,InstanceType,AvailabilityZone,InstanceStatus,AlarmStatus,ElasticIP,SecurityGroupName,KeyName,LaunchTime,PlatformDetails"
+HEADER="InstanceId,InstanceName,PublicIP,PrivateIP,InstanceType,AvailabilityZone,AlarmStatus,ElasticIP,SecurityGroupName,KeyName,LaunchTime,PlatformDetails"
 
 # Add all tag keys to header
 for tag in $ALL_TAGS; do
@@ -154,14 +150,8 @@ echo "$INSTANCES_JSON" | jq -c '.Reservations[].Instances[]' | while read -r ins
         fi
     fi
     
-    # Get instance status from INSTANCE_STATUS_JSON
-    instance_status=$(echo "$INSTANCE_STATUS_JSON" | jq -r --arg instance_id "$instance_id" '.InstanceStatuses[] | select(.InstanceId==$instance_id) | .InstanceState.Name' 2>/dev/null)
-    if [ -z "$instance_status" ]; then
-        instance_status="N/A"
-    fi
-
     # Start building the CSV line with instance details
-    LINE="${instance_id},\"${instance_name//\"/\"\"}\",\"${public_ip}\",\"${private_ip}\",\"${instance_type}\",\"${availability_zone}\",\"${instance_status}\",\"${alarm_status}\",\"${elastic_ip}\",\"${security_group_names//\"/\"\"}\",\"${key_name//\"/\"\"}\",\"${launch_time}\",\"${platform_details//\"/\"\"}\""
+    LINE="${instance_id},\"${instance_name//\"/\"\"}\",\"${public_ip}\",\"${private_ip}\",\"${instance_type}\",\"${availability_zone}\",\"${alarm_status}\",\"${elastic_ip}\",\"${security_group_names//\"/\"\"}\",\"${key_name//\"/\"\"}\",\"${launch_time}\",\"${platform_details//\"/\"\"}\""
     
     # Process each discovered tag (except Name which we already handled)
     for tag in $ALL_TAGS; do
