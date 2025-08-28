@@ -9,6 +9,10 @@
 DEFAULT_REGION="ap-southeast-2"
 REGION=${AWS_DEFAULT_REGION:-$DEFAULT_REGION}
 
+# Generate timestamp for filename
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+OUTPUT_FILE="aws_loadbalancers_${TIMESTAMP}.csv"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -45,31 +49,6 @@ check_prerequisites() {
     fi
     
     print_status "Prerequisites check completed successfully."
-}
-
-# Get AWS Account ID
-get_account_id() {
-    print_status "Retrieving AWS Account ID..."
-    
-    AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null)
-    
-    if [ -z "$AWS_ACCOUNT_ID" ]; then
-        print_error "Failed to retrieve AWS Account ID. Check your credentials."
-        exit 1
-    fi
-    
-    print_status "AWS Account ID: $AWS_ACCOUNT_ID"
-    return 0
-}
-
-# Generate timestamp and create output file name
-create_output_filename() {
-    # Generate timestamp for filename
-    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    
-    # Create output filename with account ID
-    OUTPUT_FILE="aws_loadbalancers_${AWS_ACCOUNT_ID}_${TIMESTAMP}.csv"
-    print_status "Output will be saved to: $OUTPUT_FILE"
 }
 
 # Function to create CSV header
@@ -134,7 +113,6 @@ display_summary() {
         TOTAL_RECORDS=$(($(wc -l < "$OUTPUT_FILE") - 1))
         print_status "Export completed successfully!"
         print_status "Region: $REGION"
-        print_status "AWS Account ID: $AWS_ACCOUNT_ID"
         print_status "Total Load Balancers exported: $TOTAL_RECORDS"
         print_status "Output file: $OUTPUT_FILE"
         print_status "File size: $(du -h "$OUTPUT_FILE" | cut -f1)"
@@ -158,12 +136,6 @@ main() {
     
     # Check prerequisites
     check_prerequisites
-    
-    # Get AWS account ID
-    get_account_id
-    
-    # Create output filename with account ID
-    create_output_filename
     
     # Create CSV file with header
     create_csv_header
