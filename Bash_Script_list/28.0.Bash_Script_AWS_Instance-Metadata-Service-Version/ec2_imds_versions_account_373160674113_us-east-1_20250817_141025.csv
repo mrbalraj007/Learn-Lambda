@@ -1,0 +1,6 @@
+InstanceId,State,Name,IMDSVersion,HttpTokens,HopLimit,Endpoint,InstanceTags,Region,Timestamp
+i-0991a36d254f65035,terminated,Jenkins-Trivy-1,IMDSv2,required,2,enabled,disabled,us-east-1,2025-08-17 14:10:28
+i-0fa0257b96fe193ba,terminated,Jenkins-Trivy-2,IMDSv2,required,2,enabled,disabled,us-east-1,2025-08-17 14:10:28
+i-04247f98bde70e2bd,running,Jenkins-Trivy-1,IMDSv2,required,2,enabled,disabled,us-east-1,2025-08-17 14:10:28
+i-0c002569e7c910611,running,Jenkins-Trivy-2,IMDSv2,required,2,enabled,disabled,us-east-1,2025-08-17 14:10:28
+i-0ecc7ba6eb0edffb2,running,WindowsServer2019,IMDSv1/v2,optional,1,enabled,disabled,us-east-1,2025-08-17 14:10:28

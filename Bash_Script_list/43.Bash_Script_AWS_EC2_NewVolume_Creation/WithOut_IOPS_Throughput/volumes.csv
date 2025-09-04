@@ -1,0 +1,11 @@
+Size,VolumeType,Encrypted,TagName
+100,gp3,TRUE,MSSQLSERVER Backups
+1500,gp3,TRUE,MSSQLSERVER Data
+1500,gp3,TRUE,MSSQLSERVER Logs
+200,gp3,TRUE,TEMP
+1500,gp3,TRUE,EDS_RDS
+1,gp3,TRUE,MSSQLSERVER Mountpoint
+5048,gp3,TRUE,PreComArchiveData
+5048,gp3,TRUE,PreComArchiveLogs
+100,gp3,TRUE,EDSArchivalData
+100,gp3,TRUE,EDSArchivalLogs

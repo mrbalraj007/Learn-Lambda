@@ -2,8 +2,8 @@
 
 # -------- CONFIGURATION --------
 CSV_FILE="ec2_instances.csv"            # CSV file with instance_id column
-BACKUP_VAULT_NAME="SSM-Patching"          # Change to your vault name
-IAM_ROLE_ARN="arn:aws:iam::927721130786:role/service-role/AWSBackupDefaultServiceRole"  # IAM role used for backup
+BACKUP_VAULT_NAME="Default"          # Change to your vault name
+IAM_ROLE_ARN="arn:aws:iam::502966642495:role/service-role/AWSBackupDefaultServiceRole"  # IAM role used for backup
 RETENTION=7                             # Retention period in days
 LOG_FILE="backup_log_$(date +%F_%T).log"
 REGION=$(aws configure get region)      # Get current AWS region

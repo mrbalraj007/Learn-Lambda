@@ -1,0 +1,2 @@
+LoadBalancer_Name,DNS_Name,State,VPC_ID,Availability_Zones,Type,Date_Created
+"GE-PALO-GWLB",,"active","vpc-0817394bc0de4a55c","ap-southeast-2b;ap-southeast-2c;ap-southeast-2a","gateway","2022-05-12T10:15:48.106000+00:00"

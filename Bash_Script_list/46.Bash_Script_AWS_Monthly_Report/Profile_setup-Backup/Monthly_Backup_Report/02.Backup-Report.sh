@@ -15,7 +15,7 @@ SUMMARY_FILE="backup-august-summary_${TIMESTAMP}.csv"
 PROFILES_FILE="profiles.txt"
 REGION="ap-southeast-2"
 
-# Set fixed date range for August 1-30
+# Set fixed date range for Monthly 1-30
 CURRENT_YEAR=$(date +"%Y")
 START_TIME="${CURRENT_YEAR}-08-01T00:00:00Z"
 END_TIME="${CURRENT_YEAR}-08-30T23:59:59Z"

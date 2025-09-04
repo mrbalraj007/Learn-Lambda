@@ -12,7 +12,6 @@ set -euo pipefail
 CSV_FILE="accounts.csv"
 OUTPUT_FILE="ec2_inventory.csv"
 TEMP_FILE=$(mktemp)
-TAG_KEYS_FILE=$(mktemp)
 
 # Check if CSV file exists
 if [ ! -f "$CSV_FILE" ]; then
@@ -51,45 +50,13 @@ for profile in "${PROFILES[@]}"; do
     echo "  - $profile"
 done
 
-echo "🔍 Scanning for all unique EC2 tag keys across all accounts..."
+# Write base CSV header - Added OS details columns
+BASE_HEADER="AccountID,AccountName,InstanceID,Name,State,PrivateIP,PublicIP,InstanceType,VPC,Subnet,AZ,Platform,PlatformDetails,ImageId,OSName,OSVersion"
 
-# First pass: collect all unique tag keys
-for profile in "${PROFILES[@]}"; do
-  echo ">>> Collecting tag keys from profile: $profile"
-  
-  # Skip invalid profiles
-  if ! aws sts get-caller-identity --profile "$profile" >/dev/null 2>&1; then
-    echo "  Warning: Profile $profile not valid or accessible. Skipping..."
-    continue
-  fi
+# Write header to output file
+echo "${BASE_HEADER}" > "$OUTPUT_FILE"
 
-  # Get all unique tag keys from all instances
-  aws ec2 describe-instances --profile "$profile" --region ap-southeast-2 --output json 2>/dev/null | \
-  jq -r '.Reservations[].Instances[].Tags[]?.Key' 2>/dev/null | sort -u >> "$TAG_KEYS_FILE"
-done
-
-# Get unique tag keys in a predictable order (sort alphabetically)
-readarray -t SORTED_TAG_KEYS < <(sort -u "$TAG_KEYS_FILE" | grep -v "^$")
-
-# Prioritize 'Name' tag if it exists (move to beginning of list)
-if [[ " ${SORTED_TAG_KEYS[*]} " == *" Name "* ]]; then
-  # Remove 'Name' from array since we already handle it in base columns
-  SORTED_TAG_KEYS=($(echo "${SORTED_TAG_KEYS[@]}" | tr ' ' '\n' | grep -v "^Name$"))
-fi
-
-# Write base CSV header
-BASE_HEADER="AccountID,AccountName,InstanceID,Name,State,PrivateIP,PublicIP,InstanceType,VPC,Subnet,AZ"
-
-# Generate the tag headers with Tag: prefix for clarity
-TAG_HEADERS=""
-for key in "${SORTED_TAG_KEYS[@]}"; do
-  TAG_HEADERS="${TAG_HEADERS},\"Tag: ${key}\""
-done
-
-# Write full header to output file
-echo "${BASE_HEADER}${TAG_HEADERS}" > "$OUTPUT_FILE"
-
-# Second pass: get instance details with tags in separate columns
+# Get instance details without tags
 for profile in "${PROFILES[@]}"; do
   echo ">>> Fetching EC2s for profile: $profile"
 
@@ -102,7 +69,7 @@ for profile in "${PROFILES[@]}"; do
   # Get Account ID
   ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text --profile "$profile")
 
-  # Process each instance individually to handle tags properly
+  # Process each instance individually
   aws ec2 describe-instances --profile "$profile" --region ap-southeast-2 --output json 2>/dev/null | \
   jq -c '.Reservations[].Instances[]' 2>/dev/null | while read -r instance; do
     # Extract basic instance properties
@@ -115,13 +82,46 @@ for profile in "${PROFILES[@]}"; do
     VPC=$(echo "$instance" | jq -r '.VpcId')
     SUBNET=$(echo "$instance" | jq -r '.SubnetId')
     AZ=$(echo "$instance" | jq -r '.Placement.AvailabilityZone')
+    
+    # Extract OS information
+    PLATFORM=$(echo "$instance" | jq -r '.Platform // "linux"')
+    PLATFORM_DETAILS=$(echo "$instance" | jq -r '.PlatformDetails // "N/A"')
+    IMAGE_ID=$(echo "$instance" | jq -r '.ImageId // "N/A"')
+    
+    # Get detailed OS information from the AMI
+    if [ "$IMAGE_ID" != "N/A" ]; then
+      AMI_INFO=$(aws ec2 describe-images --image-ids "$IMAGE_ID" --profile "$profile" --region ap-southeast-2 --output json 2>/dev/null)
+      if [ $? -eq 0 ]; then
+        OS_NAME=$(echo "$AMI_INFO" | jq -r '.Images[0].Name // "N/A"' | sed 's/,/;/g')
+        OS_DESC=$(echo "$AMI_INFO" | jq -r '.Images[0].Description // "N/A"' | sed 's/,/;/g')
+        # Extract version information from description if available
+        OS_VERSION=$(echo "$OS_DESC" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || echo "N/A")
+        if [ "$OS_VERSION" = "" ]; then 
+          OS_VERSION="N/A"
+        fi
+      else
+        OS_NAME="Access Denied or Not Found"
+        OS_VERSION="N/A"
+      fi
+    else
+      OS_NAME="N/A"
+      OS_VERSION="N/A"
+    fi
 
-    # Start building the CSV line with basic properties
-    CSV_LINE="$ACCOUNT_ID,$profile,$INSTANCE_ID,$NAME,$STATE,$PRIVATE_IP,$PUBLIC_IP,$INSTANCE_TYPE,$VPC,$SUBNET,$AZ"
+    # Build the CSV line with basic properties and OS details
+    CSV_LINE="$ACCOUNT_ID,$profile,$INSTANCE_ID,$NAME,$STATE,$PRIVATE_IP,$PUBLIC_IP,$INSTANCE_TYPE,$VPC,$SUBNET,$AZ,$PLATFORM,\"$PLATFORM_DETAILS\",\"$IMAGE_ID\",\"$OS_NAME\",\"$OS_VERSION\""
 
-    # Extract all tags into a temporary associative array (using jq)
-    TAG_JSON=$(echo "$instance" | jq -r '.Tags // [] | map({key: .Key, value: .Value}) | from_entries')
+    # Append the CSV line to the output file
+    echo "$CSV_LINE" >> "$OUTPUT_FILE"
+  done || echo "  No EC2 instances found for profile $profile or error accessing AWS resources"
+done
 
+# Clean up temp file
+rm -f "$TEMP_FILE"
+
+echo "✅ EC2 inventory collection complete. File saved as $OUTPUT_FILE."
+echo "📊 Processed ${#PROFILES[@]} profiles from accounts.csv"
+echo "💻 Added OS details (Platform, PlatformDetails, ImageId, OSName, OSVersion)"
     # For each unique tag key in our sorted array, add its value
     for tag_key in "${SORTED_TAG_KEYS[@]}"; do
       # Extract the tag value, escape quotes and commas

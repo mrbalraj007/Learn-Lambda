@@ -1,0 +1,4 @@
+Size,VolumeType,Encrypted,TagName,iops,throughput
+100,gp3,TRUE,A,3000,125
+1500,gp3,TRUE,B,10000,500
+1500,gp3,TRUE,C,10000,500

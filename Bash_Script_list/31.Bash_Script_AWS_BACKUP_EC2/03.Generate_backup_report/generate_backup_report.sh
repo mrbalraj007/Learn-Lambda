@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VAULT_NAME="SSMPatching"   #"EC2-Backup"
+VAULT_NAME="SSM-Patching"   #"EC2-Backup"
 
 # Get AWS Account ID
 ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
