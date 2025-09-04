@@ -36,4 +36,4 @@ Universal_Terraform_EC2_Create/.terraform/providers/registry.terraform.io/hashic
 .idea
 *.html
 *.css
-*.csv
+# *.csv
