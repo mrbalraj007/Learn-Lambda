@@ -1,2 +1,0 @@
-LoadBalancer_Name,DNS_Name,State,VPC_ID,Availability_Zones,Type,Date_Created
-"otil-api-alb","internal-otil-api-alb-659020891.ap-southeast-2.elb.amazonaws.com","active","vpc-0309488c35c5a005f","ap-southeast-2b;ap-southeast-2a","application","2023-04-26T09:57:58.210000+00:00"

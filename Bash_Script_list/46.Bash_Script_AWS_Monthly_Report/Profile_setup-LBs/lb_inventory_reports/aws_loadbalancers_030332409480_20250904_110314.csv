@@ -1,8 +1,0 @@
-LoadBalancer_Name,DNS_Name,State,VPC_ID,Availability_Zones,Type,Date_Created
-"ILFTLoadBalancer-ITE-NLB","ILFTLoadBalancer-ITE-NLB-201faff6fb70a744.elb.ap-southeast-2.amazonaws.com","active","vpc-06295e1fae73a3b98","ap-southeast-2a;ap-southeast-2b","network","2025-04-04T10:24:19.587000+00:00"
-"TollWorks-Reporting-ITE-NLB","TollWorks-Reporting-ITE-NLB-8a8cddad48799024.elb.ap-southeast-2.amazonaws.com","active","vpc-06295e1fae73a3b98","ap-southeast-2a;ap-southeast-2b","network","2024-11-19T18:01:48.399000+00:00"
-"TollWorks-ITE-NLB","TollWorks-ITE-NLB-db298605c27681e8.elb.ap-southeast-2.amazonaws.com","active","vpc-06295e1fae73a3b98","ap-southeast-2b;ap-southeast-2a","network","2024-11-19T05:17:05.726000+00:00"
-"ILFT-ITE-ALB","ILFT-ITE-ALB-142130133.ap-southeast-2.elb.amazonaws.com","active","vpc-06295e1fae73a3b98","ap-southeast-2b;ap-southeast-2a","application","2023-06-02T07:08:56.980000+00:00"
-"TollWorks-ITE-ALB","internal-TollWorks-ITE-ALB-928984616.ap-southeast-2.elb.amazonaws.com","active","vpc-06295e1fae73a3b98","ap-southeast-2a;ap-southeast-2b","application","2025-01-31T08:45:38.047000+00:00"
-"TollWorks-Reporting-ITE-NLB","internal-TollWorks-Reporting-ITE-NLB-1351237720.ap-southeast-2.elb.amazonaws.com","active","vpc-06295e1fae73a3b98","ap-southeast-2a;ap-southeast-2b","application","2025-02-28T11:45:04.052000+00:00"
-"ILFTLoadBalancer-ITE-ALB","internal-ILFTLoadBalancer-ITE-ALB-1068550376.ap-southeast-2.elb.amazonaws.com","active","vpc-06295e1fae73a3b98","ap-southeast-2a;ap-southeast-2b","application","2025-04-04T10:15:38.036000+00:00"

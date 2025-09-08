@@ -1,2 +1,0 @@
-LoadBalancer_Name,DNS_Name,State,VPC_ID,Availability_Zones,Type,Date_Created
-"http-dynatrace-relay-alb","internal-http-dynatrace-relay-alb-1307117084.ap-southeast-2.elb.amazonaws.com","active","vpc-0795466f0d03ef3a9","ap-southeast-2a;ap-southeast-2b","application","2025-04-28T10:45:51.819000+00:00"

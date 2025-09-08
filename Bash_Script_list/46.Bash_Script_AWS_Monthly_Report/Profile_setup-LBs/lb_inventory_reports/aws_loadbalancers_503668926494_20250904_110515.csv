@@ -1,7 +1,0 @@
-LoadBalancer_Name,DNS_Name,State,VPC_ID,Availability_Zones,Type,Date_Created
-"TollWorks-Reporting-PREPROD-NLB","TollWorks-Reporting-PREPROD-NLB-33fe6cb8f06bf485.elb.ap-southeast-2.amazonaws.com","active","vpc-0d4a64719afa102b4","ap-southeast-2b;ap-southeast-2a","network","2024-12-04T04:24:42.002000+00:00"
-"TollWorks-PREPROD-NLB","TollWorks-PREPROD-NLB-4c4abf5548806f08.elb.ap-southeast-2.amazonaws.com","active","vpc-0d4a64719afa102b4","ap-southeast-2a;ap-southeast-2b","network","2024-12-03T11:52:44.135000+00:00"
-"ILFT-PREPROD-NLB","ILFT-PREPROD-NLB-6ba6f6cfbf1dc065.elb.ap-southeast-2.amazonaws.com","active","vpc-0d4a64719afa102b4","ap-southeast-2a;ap-southeast-2b","network","2025-03-29T09:02:19.158000+00:00"
-"TollWorks-PREPROD-ALB","internal-TollWorks-PREPROD-ALB-1179942258.ap-southeast-2.elb.amazonaws.com","active","vpc-0d4a64719afa102b4","ap-southeast-2a;ap-southeast-2b","application","2025-01-23T06:31:28.489000+00:00"
-"TollWorks-Reporting-PREPROD-ALB","internal-TollWorks-Reporting-PREPROD-ALB-893099612.ap-southeast-2.elb.amazonaws.com","active","vpc-0d4a64719afa102b4","ap-southeast-2a;ap-southeast-2b","application","2025-02-05T18:41:24.031000+00:00"
-"ILFT-PREPROD-ALB","internal-ILFT-PREPROD-ALB-1062777400.ap-southeast-2.elb.amazonaws.com","active","vpc-0d4a64719afa102b4","ap-southeast-2a;ap-southeast-2b","application","2025-02-07T12:51:08.985000+00:00"
