@@ -8,10 +8,25 @@
 
 set -euo pipefail
 
+# Require jq
+if ! command -v jq >/dev/null 2>&1; then
+  echo "❌ Error: 'jq' is required but not installed. Please install jq and retry."
+  exit 1
+fi
+
+# Improve resiliency against throttling/timeouts
+export AWS_RETRY_MODE=adaptive
+export AWS_MAX_ATTEMPTS=10
+AWS_CLI_FLAGS="--cli-read-timeout 120 --cli-connect-timeout 10"
+
+# Fixed region configuration (override by exporting TARGET_REGIONS="ap-southeast-2 us-east-1", etc.)
+DEFAULT_REGION="ap-southeast-2"
+TARGET_REGIONS="${TARGET_REGIONS:-$DEFAULT_REGION}"
+echo "🌏 Regions to scan: $TARGET_REGIONS"
+
 # Input and output files
 CSV_FILE="accounts.csv"
 OUTPUT_FILE="ec2_inventory.csv"
-TEMP_FILE=$(mktemp)
 
 # Check if CSV file exists
 if [ ! -f "$CSV_FILE" ]; then
@@ -22,6 +37,8 @@ fi
 # Build profile list from accounts.csv
 declare -a PROFILES
 while IFS=, read -r account_id permission_set || [ -n "$account_id" ]; do
+    # Strip UTF-8 BOM and CRs, then trim
+    account_id=$(printf '%s' "$account_id" | sed $'s/^\xEF\xBB\xBF//' | tr -d '\r' | xargs)
     # Skip header line
     if [ "$account_id" = "account_id" ]; then
         continue
@@ -56,89 +73,123 @@ BASE_HEADER="AccountID,AccountName,InstanceID,Name,State,PrivateIP,PublicIP,Inst
 # Write header to output file
 echo "${BASE_HEADER}" > "$OUTPUT_FILE"
 
-# Get instance details without tags
+# Helper: safe instance fetch -> always returns a JSON array ([] on error)
+get_instances_json() {
+  local profile="$1" region="$2"
+  local raw
+  if ! raw=$(aws ec2 describe-instances --profile "$profile" --region "$region" $AWS_CLI_FLAGS --output json 2>/dev/null); then
+    echo "[]"
+    return 0
+  fi
+  jq -c '[.Reservations // [] | .[]? | .Instances // [] | .[]?]' <<<"$raw" 2>/dev/null || echo "[]"
+}
+
+# Get instance details across selected regions only
 for profile in "${PROFILES[@]}"; do
   echo ">>> Fetching EC2s for profile: $profile"
 
-  # Verify profile is valid and accessible
+  # Validate or auto-login SSO once, then retry
+  if ! aws sts get-caller-identity --profile "$profile" >/dev/null 2>&1; then
+    sso_name=$(aws configure get sso_session --profile "$profile" 2>/dev/null || true)
+    if [ -n "$sso_name" ]; then
+      echo "  Attempting SSO login for $profile (session: $sso_name)..."
+      aws sso login --profile "$profile" >/dev/null 2>&1 || true
+    fi
+  fi
   if ! aws sts get-caller-identity --profile "$profile" >/dev/null 2>&1; then
     echo "  Warning: Profile $profile not valid or accessible. Skipping..."
     continue
   fi
 
-  # Get Account ID
   ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text --profile "$profile")
+  REGIONS="$TARGET_REGIONS"
 
-  # Process each instance individually
-  aws ec2 describe-instances --profile "$profile" --region ap-southeast-2 --output json 2>/dev/null | \
-  jq -c '.Reservations[].Instances[]' 2>/dev/null | while read -r instance; do
-    # Extract basic instance properties
-    INSTANCE_ID=$(echo "$instance" | jq -r '.InstanceId')
-    NAME=$(echo "$instance" | jq -r '(.Tags[] | select(.Key=="Name") | .Value) // "NoName"')
-    STATE=$(echo "$instance" | jq -r '.State.Name')
-    PRIVATE_IP=$(echo "$instance" | jq -r '.PrivateIpAddress // "N/A"')
-    PUBLIC_IP=$(echo "$instance" | jq -r '.PublicIpAddress // "N/A"')
-    INSTANCE_TYPE=$(echo "$instance" | jq -r '.InstanceType')
-    VPC=$(echo "$instance" | jq -r '.VpcId')
-    SUBNET=$(echo "$instance" | jq -r '.SubnetId')
-    AZ=$(echo "$instance" | jq -r '.Placement.AvailabilityZone')
-    
-    # Extract OS information
-    PLATFORM=$(echo "$instance" | jq -r '.Platform // "linux"')
-    PLATFORM_DETAILS=$(echo "$instance" | jq -r '.PlatformDetails // "N/A"')
-    IMAGE_ID=$(echo "$instance" | jq -r '.ImageId // "N/A"')
-    
-    # Get detailed OS information from the AMI
-    if [ "$IMAGE_ID" != "N/A" ]; then
-      AMI_INFO=$(aws ec2 describe-images --image-ids "$IMAGE_ID" --profile "$profile" --region ap-southeast-2 --output json 2>/dev/null)
-      if [ $? -eq 0 ]; then
-        OS_NAME=$(echo "$AMI_INFO" | jq -r '.Images[0].Name // "N/A"' | sed 's/,/;/g')
-        OS_DESC=$(echo "$AMI_INFO" | jq -r '.Images[0].Description // "N/A"' | sed 's/,/;/g')
-        # Extract version information from description if available
-        OS_VERSION=$(echo "$OS_DESC" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || echo "N/A")
-        if [ "$OS_VERSION" = "" ]; then 
+  total_profile_count=0
+  for region in $REGIONS; do
+    echo "  - Region: $region"
+
+    # Safe fetch that never breaks the script
+    INSTANCES_JSON=$(get_instances_json "$profile" "$region")
+    inst_count=$(jq 'length' <<<"$INSTANCES_JSON" 2>/dev/null || echo 0)
+    echo "    Instances found: $inst_count"
+    if [ "${inst_count:-0}" -eq 0 ]; then
+      continue
+    fi
+
+    # Build unique AMI list for the region (avoid process substitution)
+    IDS_RAW=$(jq -r '[.[].ImageId // empty] | unique | .[]' <<<"$INSTANCES_JSON" 2>/dev/null || true)
+    mapfile -t IMAGE_IDS <<< "$IDS_RAW"
+    AMI_MAP_FILE=$(mktemp)
+    : > "$AMI_MAP_FILE"
+
+    # Batch describe-images (limit ~100 per call); guard pipeline with || true
+    if [ "${#IMAGE_IDS[@]}" -gt 0 ]; then
+      batch=()
+      for img in "${IMAGE_IDS[@]}"; do
+        batch+=("$img")
+        if [ "${#batch[@]}" -ge 95 ]; then
+          aws ec2 describe-images --image-ids "${batch[@]}" --profile "$profile" --region "$region" $AWS_CLI_FLAGS --output json 2>/dev/null \
+            | jq -r '.Images[] | [.ImageId, (.Name // "N/A"), (.Description // "N/A")] | @tsv' 2>/dev/null >> "$AMI_MAP_FILE" || true
+          batch=()
+        fi
+      done
+      if [ "${#batch[@]}" -gt 0 ]; then
+        aws ec2 describe-images --image-ids "${batch[@]}" --profile "$profile" --region "$region" $AWS_CLI_FLAGS --output json 2>/dev/null \
+          | jq -r '.Images[] | [.ImageId, (.Name // "N/A"), (.Description // "N/A")] | @tsv' 2>/dev/null >> "$AMI_MAP_FILE" || true
+      fi
+    fi
+
+    # Iterate instances without a pipe (avoid pipefail aborts)
+    LINES=$(jq -c '.[]' <<<"$INSTANCES_JSON" 2>/dev/null || true)
+    if [ -z "$LINES" ]; then
+      echo "    Parsing produced 0 lines for region $region"
+      rm -f "$AMI_MAP_FILE"
+      continue
+    fi
+    while IFS= read -r instance; do
+      INSTANCE_ID=$(echo "$instance" | jq -r '.InstanceId')
+      NAME=$(echo "$instance" | jq -r '((.Tags // []) | map(select(.Key=="Name")) | .[0].Value) // "NoName"')
+      STATE=$(echo "$instance" | jq -r '.State.Name')
+      PRIVATE_IP=$(echo "$instance" | jq -r '.PrivateIpAddress // "N/A"')
+      PUBLIC_IP=$(echo "$instance" | jq -r '.PublicIpAddress // "N/A"')
+      INSTANCE_TYPE=$(echo "$instance" | jq -r '.InstanceType')
+      VPC=$(echo "$instance" | jq -r '.VpcId // "N/A"')
+      SUBNET=$(echo "$instance" | jq -r '.SubnetId // "N/A"')
+      AZ=$(echo "$instance" | jq -r '.Placement.AvailabilityZone // "N/A"')
+
+      PLATFORM=$(echo "$instance" | jq -r '.Platform // "linux"')
+      PLATFORM_DETAILS=$(echo "$instance" | jq -r '.PlatformDetails // "N/A"')
+      IMAGE_ID=$(echo "$instance" | jq -r '.ImageId // "N/A"')
+
+      if [ "$IMAGE_ID" != "N/A" ]; then
+        AMI_ROW=$(awk -F'\t' -v id="$IMAGE_ID" '$1==id {print; exit}' "$AMI_MAP_FILE" 2>/dev/null || true)
+        if [ -n "$AMI_ROW" ]; then
+          OS_NAME=$(printf "%s" "$AMI_ROW" | cut -f2 | sed 's/,/;/g; s/"/\\"/g')
+          OS_DESC=$(printf "%s" "$AMI_ROW" | cut -f3 | sed 's/,/;/g; s/"/\\"/g')
+          OS_VERSION=$(echo "$OS_DESC" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+          [ -z "${OS_VERSION:-}" ] && OS_VERSION="N/A"
+        else
+          OS_NAME="Not Found"
           OS_VERSION="N/A"
         fi
       else
-        OS_NAME="Access Denied or Not Found"
+        OS_NAME="N/A"
         OS_VERSION="N/A"
       fi
-    else
-      OS_NAME="N/A"
-      OS_VERSION="N/A"
-    fi
 
-    # Build the CSV line with basic properties and OS details
-    CSV_LINE="$ACCOUNT_ID,$profile,$INSTANCE_ID,$NAME,$STATE,$PRIVATE_IP,$PUBLIC_IP,$INSTANCE_TYPE,$VPC,$SUBNET,$AZ,$PLATFORM,\"$PLATFORM_DETAILS\",\"$IMAGE_ID\",\"$OS_NAME\",\"$OS_VERSION\""
+      q_NAME=$(echo "$NAME" | sed 's/,/;/g; s/"/\\"/g')
+      q_PLATFORM_DETAILS=$(echo "$PLATFORM_DETAILS" | sed 's/,/;/g; s/"/\\"/g')
 
-    # Append the CSV line to the output file
-    echo "$CSV_LINE" >> "$OUTPUT_FILE"
-  done || echo "  No EC2 instances found for profile $profile or error accessing AWS resources"
+      CSV_LINE="$ACCOUNT_ID,$profile,$INSTANCE_ID,\"$q_NAME\",$STATE,$PRIVATE_IP,$PUBLIC_IP,$INSTANCE_TYPE,$VPC,$SUBNET,$AZ,$PLATFORM,\"$q_PLATFORM_DETAILS\",\"$IMAGE_ID\",\"$OS_NAME\",\"$OS_VERSION\""
+      printf "%s\n" "$CSV_LINE" >> "$OUTPUT_FILE"
+    done <<< "$LINES"
+
+    total_profile_count=$(( total_profile_count + inst_count ))
+    rm -f "$AMI_MAP_FILE"
+  done
+
+  echo "  => Profile $profile total instances: $total_profile_count"
 done
-
-# Clean up temp file
-rm -f "$TEMP_FILE"
 
 echo "✅ EC2 inventory collection complete. File saved as $OUTPUT_FILE."
-echo "📊 Processed ${#PROFILES[@]} profiles from accounts.csv"
-echo "💻 Added OS details (Platform, PlatformDetails, ImageId, OSName, OSVersion)"
-    # For each unique tag key in our sorted array, add its value
-    for tag_key in "${SORTED_TAG_KEYS[@]}"; do
-      # Extract the tag value, escape quotes and commas
-      tag_value=$(echo "$TAG_JSON" | jq -r --arg key "$tag_key" '.[$key] // "" | gsub(","; "|") | gsub("\""; "\\\"")' 2>/dev/null)
-      
-      # Add the tag value to the CSV line (quoted to handle special characters)
-      CSV_LINE="$CSV_LINE,\"$tag_value\""
-    done
-
-    # Append the CSV line to the output file
-    echo "$CSV_LINE" >> "$OUTPUT_FILE"
-  done || echo "  No EC2 instances found for profile $profile or error accessing AWS resources"
-done
-
-# Clean up temp files
-rm -f "$TEMP_FILE" "$TAG_KEYS_FILE"
-
-echo "✅ EC2 inventory collection complete. File saved as $OUTPUT_FILE with sorted tag columns."
-echo "🔍 Tags are prefixed with 'Tag:' for easier identification in spreadsheet applications."
 echo "📊 Processed ${#PROFILES[@]} profiles from accounts.csv"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Script Name : backup_august_report.sh
-# Description : Collect AWS Backup jobs from August 1-30 across multiple
+# Script Name : backup_monthly_report.sh
+# Description : Collect AWS Backup jobs from Monthly 1-30 across multiple
 #               AWS accounts (via SSO profiles) for ap-southeast-2 region.
 #               Generates detailed + summary CSV reports.
 # Author      : AWS Engineer
@@ -10,15 +10,15 @@
 set -euo pipefail
 
 TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
-OUTPUT_FILE="backup-august-report_${TIMESTAMP}.csv"
-SUMMARY_FILE="backup-august-summary_${TIMESTAMP}.csv"
+OUTPUT_FILE="backup-monthly-report_${TIMESTAMP}.csv"
+SUMMARY_FILE="backup-monthly-summary_${TIMESTAMP}.csv"
 PROFILES_FILE="profiles.txt"
 REGION="ap-southeast-2"
 
 # Set fixed date range for Monthly 1-30
 CURRENT_YEAR=$(date +"%Y")
-START_TIME="${CURRENT_YEAR}-08-01T00:00:00Z"
-END_TIME="${CURRENT_YEAR}-08-30T23:59:59Z"
+START_TIME="${CURRENT_YEAR}-09-01T00:00:00Z"
+END_TIME="${CURRENT_YEAR}-09-15T23:59:59Z"
 NOW_UTC=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Helper: paginate list-backup-jobs, emit .BackupJobs as compact JSON arrays per page
@@ -50,7 +50,7 @@ while read -r PROFILE; do
   PROFILE="${PROFILE//$'\r'/}"  # strip Windows CR so profiles like 'name\r' work
   [[ -z "$PROFILE" ]] && continue
 
-  echo "Collecting backup jobs for profile: $PROFILE (August 1-30)"
+  echo "Collecting backup jobs for profile: $PROFILE (Monthly 1-30)"
 
   # Get account ID for profile (fail gracefully)
   if ! ACCOUNT_ID=$(aws sts get-caller-identity --profile "$PROFILE" --query Account --output text 2>/dev/null); then
@@ -110,5 +110,5 @@ while read -r PROFILE; do
 
 done < "$PROFILES_FILE"
 
-echo "✅ Detailed report for August 1-30: $OUTPUT_FILE"
-echo "✅ Summary report for August 1-30 : $SUMMARY_FILE"
+echo "✅ Detailed report for Monthly 1-30: $OUTPUT_FILE"
+echo "✅ Summary report for Monthly 1-30 : $SUMMARY_FILE"

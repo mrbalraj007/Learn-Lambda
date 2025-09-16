@@ -1,0 +1,6 @@
+LoadBalancer_Name,DNS_Name,State,VPC_ID,Availability_Zones,Type,Date_Created
+"CPP-NonProd-NLB","CPP-NonProd-NLB-41d014d69b0cb383.elb.ap-southeast-2.amazonaws.com","active","vpc-0e55be5d7491b5cb4","ap-southeast-2b;ap-southeast-2c;ap-southeast-2a","network","2023-07-18T14:23:43.148000+00:00"
+"StreamDirect-Dev-ALB","StreamDirect-Dev-ALB-1296904603.ap-southeast-2.elb.amazonaws.com","active","vpc-09a6c2cfc84e83057","ap-southeast-2c;ap-southeast-2b","application","2024-01-31T04:11:55.030000+00:00"
+"SSRSNonProd-int-prod-alb","internal-SSRSNonProd-int-prod-alb-37446537.ap-southeast-2.elb.amazonaws.com","active","vpc-09a6c2cfc84e83057","ap-southeast-2a;ap-southeast-2b;ap-southeast-2c","application","2024-05-17T03:10:44.150000+00:00"
+"taps-staging","internal-taps-staging-2085148523.ap-southeast-2.elb.amazonaws.com","active","vpc-0e55be5d7491b5cb4","ap-southeast-2c;ap-southeast-2a;ap-southeast-2b","application","2024-08-16T04:13:46.700000+00:00"
+"taps-dev","internal-taps-dev-1671133226.ap-southeast-2.elb.amazonaws.com","active","vpc-0e55be5d7491b5cb4","ap-southeast-2c;ap-southeast-2a;ap-southeast-2b","application","2025-03-18T08:07:42.265000+00:00"

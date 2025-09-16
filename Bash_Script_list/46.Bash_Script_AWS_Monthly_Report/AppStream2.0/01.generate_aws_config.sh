@@ -14,7 +14,8 @@ SSO_REGION="ap-southeast-2"                           # <-- Replace if different
 DEFAULT_REGION="ap-southeast-2"
 OUTPUT_FORMAT="json"
 SSO_SESSION_NAME="readonly"
-REPORT_FILE="aws_profiles_verification.csv"
+TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+REPORT_FILE="aws_profiles_verification_${TIMESTAMP}.csv"
 
 # Check if CSV file exists
 if [ ! -f "$CSV_FILE" ]; then
@@ -34,25 +35,27 @@ EOF
     exit 1
 fi
 
-# Robust check for valid data rows (ignore header/blank/CRLF/spaces)
-EXPECTED_ACCOUNT_COUNT=$(
-  tail -n +2 "$CSV_FILE" \
-    | tr -d '\r' \
-    | awk -F',' '
-        {
-          gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1);
-          gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2);
-          if ($1 != "" && $1 != "account_id" && $2 != "") print
-        }
-      ' \
-    | wc -l | tr -d ' '
-)
-if [ "$EXPECTED_ACCOUNT_COUNT" -eq 0 ]; then
-    echo "❌ Error: The CSV file '$CSV_FILE' contains no valid account rows."
-    echo "Please add lines like: account_id,permission_set (one per line)"
+# Check if CSV file has content (beyond header) - robust to CRLF and missing trailing newline
+EXPECTED_ACCOUNT_COUNT=$(awk -F',' 'NR==1{next} { gsub(/\r/,""); if ($0 !~ /^[[:space:]]*$/) c++ } END{ print c+0 }' "$CSV_FILE")
+if [ "$EXPECTED_ACCOUNT_COUNT" -le 0 ]; then
+    echo "❌ Error: The CSV file '$CSV_FILE' appears to be empty or contains only headers."
+    echo "Please add your AWS accounts in the format: account_id,permission_set (one entry per line)"
     exit 1
 fi
-echo "📋 Found $EXPECTED_ACCOUNT_COUNT accounts in CSV file"
+
+# Delete existing config.bak file if it exists
+CONFIG_BAK_FILE="$HOME/.aws/config.bak"
+if [ -f "$CONFIG_BAK_FILE" ]; then
+    echo "🗑️ Deleting existing backup file: $CONFIG_BAK_FILE"
+    rm -f "$CONFIG_BAK_FILE"
+fi
+
+# Delete any config.bak.* files (timestamp backups from previous runs)
+CONFIG_BAK_PATTERN="$HOME/.aws/config.bak.*"
+if ls $CONFIG_BAK_PATTERN 1> /dev/null 2>&1; then
+    echo "🗑️ Deleting old timestamp backup files: $CONFIG_BAK_PATTERN"
+    rm -f $CONFIG_BAK_PATTERN
+fi
 
 # Backup old config if exists
 if [ -f "$CONFIG_FILE" ]; then
@@ -73,17 +76,16 @@ EOF
 # Initialize empty array to store profiles
 PROFILE_LIST=()
 
+# Display detected account count (computed above)
+echo "📋 Found $EXPECTED_ACCOUNT_COUNT accounts in CSV file"
+
 # Read CSV and generate profiles - handling potential Windows line endings
 while IFS=, read -r account_id permission_set || [ -n "$account_id" ]; do
-    # Strip UTF-8 BOM (if present) and CRs before any checks
-    account_id=$(printf '%s' "$account_id" | sed $'s/^\xEF\xBB\xBF//')
-    permission_set=$(printf '%s' "$permission_set" | sed $'s/^\xEF\xBB\xBF//')
-
     # Skip header line
     if [ "$account_id" = "account_id" ]; then
         continue
     fi
-
+    
     # Trim whitespace and remove carriage returns
     account_id=$(echo "$account_id" | tr -d '\r' | xargs)
     permission_set=$(echo "$permission_set" | tr -d '\r' | xargs)
@@ -123,6 +125,15 @@ for profile in "${PROFILE_LIST[@]}"; do
 done
 
 echo "✅ AWS CLI config generated at $CONFIG_FILE"
+
+# Save profile names to profiles.txt
+PROFILES_FILE="profiles.txt"
+echo "📝 Saving profile names to $PROFILES_FILE..."
+> "$PROFILES_FILE"  # Clear the file first
+for profile in "${PROFILE_LIST[@]}"; do
+    echo "$profile" >> "$PROFILES_FILE"
+done
+echo "✅ Saved ${#PROFILE_LIST[@]} profiles to $PROFILES_FILE"
 
 # Perform a single SSO login for the session
 echo "🔑 Running single SSO login for session: $SSO_SESSION_NAME ..."

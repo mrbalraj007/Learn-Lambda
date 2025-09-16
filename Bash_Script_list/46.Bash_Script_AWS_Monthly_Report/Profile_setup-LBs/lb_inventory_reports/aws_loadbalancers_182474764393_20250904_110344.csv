@@ -1,0 +1,7 @@
+LoadBalancer_Name,DNS_Name,State,VPC_ID,Availability_Zones,Type,Date_Created
+"TEDLBAWSP03","TEDLBAWSP03-d4a107894e9108af.elb.ap-southeast-2.amazonaws.com","active","vpc-0f7b9a5734e313598","ap-southeast-2a;ap-southeast-2b","network","2024-03-03T23:09:37.226000+00:00"
+"TDALBAUP021","TDALBAUP021-1014576098.ap-southeast-2.elb.amazonaws.com","active","vpc-0f7b9a5734e313598","ap-southeast-2b;ap-southeast-2a","application","2022-08-18T04:29:51.860000+00:00"
+"TEDLBAWSP01","TEDLBAWSP01-125144287.ap-southeast-2.elb.amazonaws.com","active","vpc-0f7b9a5734e313598","ap-southeast-2b;ap-southeast-2a","application","2024-03-03T23:09:37.210000+00:00"
+"TEDLBAWSP02","internal-TEDLBAWSP02-585994042.ap-southeast-2.elb.amazonaws.com","active","vpc-0f7b9a5734e313598","ap-southeast-2a;ap-southeast-2b","application","2024-03-03T23:09:37.220000+00:00"
+"TEDLBAWSP04","internal-TEDLBAWSP04-879680504.ap-southeast-2.elb.amazonaws.com","active","vpc-0f7b9a5734e313598","ap-southeast-2a;ap-southeast-2b","application","2024-03-03T23:09:37.590000+00:00"
+"TEDLBAWSP05","internal-TEDLBAWSP05-1156082357.ap-southeast-2.elb.amazonaws.com","active","vpc-0f7b9a5734e313598","ap-southeast-2c;ap-southeast-2a;ap-southeast-2b","application","2024-03-14T04:00:00.770000+00:00"

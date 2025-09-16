@@ -1,0 +1,20 @@
+Name,Type,ARN
+linehaul Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/74f08928-7ecf-4621-97f9-31f672c5183b
+Tollworks Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/7fe94dce-e4b4-490b-b115-b82cf90ecc41
+Global Express Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/8e0315a0-a774-4a4f-8c18-00a938604038
+prod_linehaul _anomaly_monitor,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/b743143f-436c-4d6a-b894-20c94ceeafb1
+Network Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/7bb984ee-baa2-49d7-b839-70c2938e071f
+Corporate Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/25617e6f-946b-44e0-a7d8-3dafb49d8a8c
+Log Archive Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/4a692231-633c-48cd-bd6d-7cc5076363ed
+Shared Services Cost Anomaly Monitor,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/ef63ad75-b7eb-4a88-b523-4f3f906fe963
+Discovery Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/2c5cd9c7-7136-4103-a4ff-6c7419f5f07b
+Workspaces Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/9e10be37-9703-4090-b78e-7281ba0ae180
+TDA Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/5bea10e8-3fb2-443e-b828-85fbdc308693
+MyToll  Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/b304f1e0-4b84-481d-8524-dadcc3a1bf83
+Sandbox Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/3be50522-da84-4b9f-b1e1-dc950448a249
+Parcels Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/02700b6a-eee7-44c5-8df8-6907c772f694
+ITSM Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/0d41cc39-8c3e-4789-8a4e-1e714ad547c7
+Deployment-Tools Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/9d4bb58d-76b8-4210-9c39-be42151f8a46
+Audit Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/f81545c9-5e25-4d8b-a5ad-5f5a1c4cab13
+Bidata Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/8a473122-180d-4032-b291-100b31a5f330
+Courier Account Anomaly,CUSTOM,arn:aws:ce::277930038095:anomalymonitor/dabc5536-19e2-440e-9638-538cd71280a0

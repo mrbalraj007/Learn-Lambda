@@ -1,0 +1,20 @@
+Subscription name,Monitors,Threshold (reached or exceeded),Alert frequency,Subscribers
+prod_linehaul_anomaly_alert,prod_linehaul _anomaly_monitor,30,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Network Account Anomaly,Network Account Anomaly,500,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Deployment-Tools Account Anomaly,Deployment-Tools Account Anomaly,100,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Log Archive Account Anomaly,Log Archive Account Anomaly,60,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+ITSM Account Anomaly,ITSM Account Anomaly,110,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Audit Account Anomaly,Audit Account Anomaly,350,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Linehaul Account Anomaly,linehaul Account Anomaly,110,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Parcels Account Anomaly,Parcels Account Anomaly,1000,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Global Express Account Anomaly,Global Express Account Anomaly,1000,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Workspaces Account Anomaly,Workspaces Account Anomaly,500,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Corporate Account Anomaly,Corporate Account Anomaly,650,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+TDA Account Anomaly,TDA Account Anomaly,1500,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Tollworks Account Anomaly,Tollworks Account Anomaly,1500,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Courier Account Anomaly,Courier Account Anomaly,35,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Bidata Account Anomaly,Bidata Account Anomaly,675,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+MyToll  Account Anomaly,MyToll  Account Anomaly,1000,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Sandbox Account Anomaly,Sandbox Account Anomaly,110,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Discovery Account Anomaly,Discovery Account Anomaly,500,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
+Shared Services Cost Anomaly Alert,Shared Services Cost Anomaly Monitor,500,IMMEDIATE,arn:aws:sns:ap-southeast-2:277930038095:TGE-Cost-Anomaly-Monitor-Chatbot
