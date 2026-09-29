@@ -13,9 +13,8 @@ mkdir -p $OUTPUT_DIR
 # Parse command line options
 REGION=""
 DEBUG=false
-CA_BUNDLE=""
 
-while getopts "r:dc:" opt; do
+while getopts "r:d" opt; do
   case ${opt} in
     r )
       REGION=$OPTARG
@@ -23,26 +22,14 @@ while getopts "r:dc:" opt; do
     d )
       DEBUG=true
       ;;
-        c )
-            CA_BUNDLE=$OPTARG
-            ;;
     \? )
-            echo "Usage: $0 [-r region] [-d] [-c CA bundle]"
+      echo "Usage: $0 [-r region] [-d]"
       echo "  -r: AWS region (default: uses AWS CLI default)"
       echo "  -d: Enable debug mode"
-            echo "  -c: PEM file containing trusted CA certificates (optional)"
       exit 1
       ;;
   esac
 done
-
-if [ -n "$CA_BUNDLE" ]; then
-    if [ ! -r "$CA_BUNDLE" ]; then
-        echo "ERROR: CA bundle is not readable: $CA_BUNDLE"
-        exit 1
-    fi
-    export AWS_CA_BUNDLE="$CA_BUNDLE"
-fi
 
 # Region parameter for AWS CLI calls
 REGION_PARAM=""
@@ -137,13 +124,6 @@ VPC_RESPONSE=$(aws ec2 $REGION_PARAM describe-vpcs --output json 2>&1)
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to retrieve VPC information:"
     echo "$VPC_RESPONSE"
-    if [[ "$VPC_RESPONSE" == *"CERTIFICATE_VERIFY_FAILED"* ]]; then
-        echo ""
-        echo "The AWS CLI cannot verify the certificate presented by the EC2 endpoint."
-        echo "If your network uses TLS inspection, obtain the trusted corporate CA certificate"
-        echo "from your IT team and rerun with: $0 -r ${REGION:-<region>} -c /path/to/ca-bundle.pem"
-        echo "Do not disable SSL certificate verification."
-    fi
     exit 1
 fi
 
