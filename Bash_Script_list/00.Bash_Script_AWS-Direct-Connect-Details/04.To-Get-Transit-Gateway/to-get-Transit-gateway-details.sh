@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: to-get-Transit-gateway-details.sh [-o output.csv] [-r "region1,region2"]
+
+Prompts for AWS regions (unless -r is supplied), queries Transit Gateways
+in each region, and writes the results to one CSV file.
+
+Options:
+  -o, --output FILE   Output file (default: transit-gateways-REGION-LIST.csv)
+  -r, --region LIST   Comma- or space-separated regions; skips the prompt
+  -h, --help          Show this help
+
+Requirements: AWS CLI v2, jq, and AWS credentials with EC2 read access.
+USAGE
+}
+
+output_file=""
+requested_region=""
+
+while (($#)); do
+  case "$1" in
+    -o|--output)
+      if (($# < 2)); then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
+      output_file="$2"
+      shift 2
+      ;;
+    -r|--region)
+      if (($# < 2)); then
+        echo "Missing value for $1" >&2
+        usage >&2
+        exit 2
+      fi
+      requested_region="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+for command_name in aws jq; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "Required command not found: $command_name" >&2
+    exit 1
+  fi
+done
+
+if [[ -z "$requested_region" ]]; then
+  read -r -p "Enter AWS region(s), comma- or space-separated (for example, ap-southeast-2,ap-southeast-4): " requested_region
+fi
+
+requested_regions="${requested_region//,/ }"
+read -r -a regions <<< "$requested_regions"
+
+if ((${#regions[@]} == 0)); then
+  echo "At least one AWS region is required." >&2
+  exit 1
+fi
+
+for region in "${regions[@]}"; do
+  if [[ ! "$region" =~ ^[a-z0-9-]+$ ]]; then
+    echo "Invalid AWS region name: $region" >&2
+    exit 2
+  fi
+done
+
+if [[ -z "$output_file" ]]; then
+  region_suffix=$(IFS=-; printf '%s' "${regions[*]}")
+  output_file="transit-gateways-${region_suffix}.csv"
+fi
+
+temporary_file="${output_file}.tmp.$$"
+rows_file="${output_file}.rows.tmp.$$"
+trap 'rm -f "$temporary_file" "$rows_file"' EXIT
+
+printf '%s\n' 'OwnerId,Region,Name,TransitGatewayId,Description,AmazonSideAsn,AutoAcceptSharedAttachments,DefaultRouteTableAssociation,AssociationDefaultRouteTableId,DefaultRouteTablePropagation,PropagationDefaultRouteTableId,VpnEcmpSupport,DnsSupport' > "$temporary_file"
+: > "$rows_file"
+
+query_failed=0
+for region in "${regions[@]}"; do
+  if ! response=$(aws ec2 describe-transit-gateways --region "$region" --output json 2>&1); then
+    echo "Warning: unable to query Transit Gateways in $region: $response" >&2
+    query_failed=1
+    continue
+  fi
+
+  if ! printf '%s' "$response" | jq -r --arg region "$region" '
+    .TransitGateways[]? |
+    [
+      (.OwnerId // ""),
+      $region,
+      ([.Tags[]? | select(.Key == "Name") | .Value] | first) // "",
+      (.TransitGatewayId // ""),
+      (.Description // ""),
+      (.Options.AmazonSideAsn // ""),
+      (.Options.AutoAcceptSharedAttachments // ""),
+      (.Options.DefaultRouteTableAssociation // ""),
+      (.Options.AssociationDefaultRouteTableId // ""),
+      (.Options.DefaultRouteTablePropagation // ""),
+      (.Options.PropagationDefaultRouteTableId // ""),
+      (.Options.VpnEcmpSupport // ""),
+      (.Options.DnsSupport // "")
+    ] | @csv
+  ' >> "$rows_file"; then
+    echo "Warning: could not parse Transit Gateway response in $region." >&2
+    query_failed=1
+  fi
+done
+
+if ! sort -u "$rows_file" >> "$temporary_file"; then
+  echo "Unable to prepare gateway rows for: $output_file" >&2
+  exit 1
+fi
+
+if ! mv "$temporary_file" "$output_file"; then
+  echo "Unable to write CSV to: $output_file" >&2
+  exit 1
+fi
+trap - EXIT
+echo "CSV written to: $output_file"
+
+if ((query_failed)); then
+  echo "Some regions could not be queried; the CSV may be incomplete." >&2
+  exit 1
+fi
