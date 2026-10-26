@@ -1,8 +1,13 @@
 #!/bin/bash
 
 # Ensure AWS CLI is installed and configured before running
+if ! ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text) \
+  || [[ ! "$ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
+  echo "Unable to determine the AWS account ID. Check AWS CLI credentials and configuration." >&2
+  exit 1
+fi
 DATE=$(date +%Y-%m-%d)
-OUTPUT_DIR="aws-unused-report-$DATE"
+OUTPUT_DIR="aws-unused-report-$ACCOUNT_ID-$DATE"
 mkdir -p "$OUTPUT_DIR"
 
 # Function to write section headers

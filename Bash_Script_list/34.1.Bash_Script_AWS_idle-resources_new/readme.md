@@ -1,6 +1,6 @@
 # AWS Unused Resources Audit
 
-This folder contains Bash scripts that query the AWS account selected by the AWS CLI and save reports about resources that may be unused or worth reviewing. The scripts only call AWS `describe` and `list` operations; they do not delete or modify AWS resources.
+This folder contains Bash scripts that query the AWS account selected by the AWS CLI and save reports about resources that may be unused or worth reviewing. They do not delete or modify AWS resources.
 
 ## Files
 
@@ -54,13 +54,13 @@ Use an appropriately scoped, read-only role. The checks need permission for the 
 
 - `ec2:DescribeVolumes`, `ec2:DescribeInstances`, `ec2:DescribeAddresses`, `ec2:DescribeSecurityGroups`, `ec2:DescribeNetworkInterfaces`, `ec2:DescribeImages`, `ec2:DescribeNatGateways`
 - `elasticloadbalancing:DescribeLoadBalancers`, `elasticloadbalancing:DescribeTargetGroups`, `elasticloadbalancing:DescribeTargetHealth`
-- `s3:ListAllMyBuckets`, `s3:ListBucket`
 - `iam:ListUsers`, `iam:GetUser`
 - `route53:ListHostedZones`
 - `rds:DescribeDBInstances`, `rds:DescribeDBSnapshots`
 - `cloudwatch:DescribeAlarms`
+- `cloudtrail:LookupEvents`
 
-S3 bucket listing permissions may need to be granted on the relevant buckets. Follow your organization's policy and least-privilege requirements.
+Follow your organization's policy and least-privilege requirements.
 
 ### 5. Review the TLS setting in the CSV script
 
@@ -82,7 +82,7 @@ Or:
 bash aws_unused_resources_report-txt-format/aws_unused_resources_report-Saveoutput-in-txt-format.sh
 ```
 
-The output directory is created in the current working directory. Its name uses the local date, for example `aws-unused-report-2026-10-26`. Running a script more than once on the same date reuses that directory and replaces report files with the same names.
+Before creating the output directory, the script gets the AWS account ID from `aws sts get-caller-identity`. If it cannot retrieve a valid account ID, it stops without creating the report directory. The directory is created in the current working directory and includes both the account ID and local date, for example `aws-unused-report-123456789012-2026-10-26`. Running a script more than once for the same account on the same date reuses that directory and replaces report files with the same names.
 
 ### 7. Review the report files
 
@@ -97,7 +97,6 @@ The CSV script creates these files:
 | `sg-unused.csv` | Non-default security groups not found on a network interface |
 | `ami-unused.csv` | All AMIs owned by the account; the script does not determine whether they are old or unused |
 | `elb-unused.csv` | ELBv2 load balancers with no target-health descriptions found across their target groups |
-| `s3-empty.csv` | Buckets for which the script finds no listed objects |
 | `iam-inactive-users.csv` | IAM users with no password-last-used value or a password last used over 90 days ago |
 | `route53-hostedzones.csv` | Hosted zones for manual review |
 | `classic-elb-unused.csv` | Classic load balancers with no registered instances |
@@ -105,6 +104,8 @@ The CSV script creates these files:
 | `rds-old-snapshots.csv` | Manual RDS snapshots older than 30 days |
 | `nat-gateways.csv` | Available NAT Gateways, which may incur hourly charges |
 | `cloudwatch-unused-alarms.csv` | Alarms currently in `OK` or `INSUFFICIENT_DATA` state |
+
+Each component CSV includes a `LastActivity` column with the latest matching CloudTrail event found in the selected AWS CLI region's available event history. CloudTrail Event History retains up to 90 days of management events; this is not a measure of workload/data-plane usage. `No event in CloudTrail history` means no matching event was returned, while `Lookup failed` means the lookup could not be completed.
 
 The text-format script creates corresponding `.txt` reports, but does not create a summary file.
 
@@ -117,5 +118,5 @@ These reports are investigation leads, not proof that a resource is safe to remo
 - The IAM check looks at `PasswordLastUsed`, not all forms of user or access-key activity.
 - The CloudWatch report selects alarms by their current state. It does not check whether that state has persisted for 30 days.
 - Route 53 hosted zones and available NAT Gateways are intentionally surfaced for manual assessment rather than conclusively classified as unused.
-- The CSV script suppresses AWS CLI error output for many calls and does not reliably propagate failures through pipelines. A failed list or attachment query can look like no results, particularly for S3 buckets and security groups. Validate permissions and do not treat an empty report as proof that no resources exist.
+- The CSV script suppresses AWS CLI error output for many calls and does not reliably propagate failures through pipelines. A failed list or attachment query can look like no results, particularly for security groups. Validate permissions and do not treat an empty report as proof that no resources exist.
 - The CSV script converts tab-separated AWS CLI output to commas; values containing commas are not escaped as standard CSV fields.
