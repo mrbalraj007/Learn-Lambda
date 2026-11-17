@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 REGION="ap-southeast-2"
