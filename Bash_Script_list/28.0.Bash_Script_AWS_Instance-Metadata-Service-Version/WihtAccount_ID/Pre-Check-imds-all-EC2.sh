@@ -1,15 +1,6 @@
 
 #!/bin/bash
 
-#InstanceId,MetadataNoTokenCount
-#i-0123456789abcdef0,0
-#i-0fedcba9876543210,15
-#i-0abc123def456ghi7,3
-
-# Where:
-# 0 = No IMDSv1 usage detected during the lookback period
-# >0 = IMDSv1 requests detected, investigate before enforcing IMDSv2
-
 REGION="ap-southeast-2"
 OUTPUT_FILE="imdsv1_usage_report.csv"
 
@@ -47,3 +38,11 @@ done
 echo "Report written to $OUTPUT_FILE"
 
 
+#InstanceId,MetadataNoTokenCount
+#i-0123456789abcdef0,0
+#i-0fedcba9876543210,15
+#i-0abc123def456ghi7,3
+
+# Where:
+# 0 = No IMDSv1 usage detected during the lookback period
+# >0 = IMDSv1 requests detected, investigate before enforcing IMDSv2
