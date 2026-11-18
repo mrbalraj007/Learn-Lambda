@@ -1,4 +1,4 @@
-How do I check if anything uses IMDSv1?
+# How do I check if anything uses IMDSv1?
 Check for direct metadata calls
 
 Windows:
