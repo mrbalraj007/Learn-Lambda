@@ -43,7 +43,7 @@ aws cloudwatch list-metrics \
   --output table
 ```
 
-> [!IMPORTANT]:
+> [!IMPORTANT]
 > AWS introduced ImdsV1Enabled on 5 November 2026. This is especially useful because it identifies instances that permit IMDSv1 even if they have made no IMDSv1 requests. 
 
 
