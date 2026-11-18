@@ -42,15 +42,18 @@ aws cloudwatch list-metrics \
   --metric-name MetadataNoTokenRejected \
   --output table
 ```
+
 > [!IMPORTANT]: 
 AWS introduced ImdsV1Enabled on 5 November 2026. This is especially useful because it identifies instances that permit IMDSv1 even if they have made no IMDSv1 requests. 
 
 
-2. Create a CloudWatch dashboard for all EC2 instances
+### 2. Create a CloudWatch dashboard for all EC2 instances
 This is what I recommend rather than manually selecting individual instance metrics.
-
+```sh
 The dashboard will show:
+
 IMDSv1 – EC2 account monitoring
+
 All
 Instances allowing IMDSv1
 
@@ -66,15 +69,18 @@ Rejected IMDSv1 requests
 Live metrics
 Migration visibility
 
-
-
 Illustrative dashboard layout, not live account data.
-Step A – Create the dashboard JSON
-On your Linux administration machine, create a file:
-nano imds-dashboard.json
+```
 
+#### Step A – Create the dashboard JSON
+On your Linux administration machine, create a file:
+```sh
+nano imds-dashboard.json
+```
 
 Paste the following:
+
+```powershell
 {
   "widgets": [
     {
@@ -140,47 +146,54 @@ Paste the following:
     }
   ]
 }
+```
 
-
-Step B – Create the dashboard
+#### Step B – Create the dashboard
 Run:
+```sh
 aws cloudwatch put-dashboard \
   --profile development \
   --region ap-southeast-2 \
   --dashboard-name IMDSv1-EC2-Monitoring \
   --dashboard-body file://imds-dashboard.json
-
-
-Expected response:
+```
+- Expected response:
+```sh
 {
   "DashboardValidationMessages": []
 }
+```
 
-
-Step C – Open your dashboard
+#### Step C – Open your dashboard
 Open:
-IMDSv1 EC2 Monitoring Dashboard – SydneyYou now have a dashboard that uses CloudWatch metric search expressions to discover matching EC2 metrics automatically, instead of hardcoding instance IDs.
+`IMDSv1 EC2 Monitoring Dashboard – Sydney` 
+
+You now have a dashboard that uses CloudWatch metric search expressions to discover matching EC2 metrics automatically, instead of hardcoding instance IDs.
 
 To use Melbourne, change every ap-southeast-2 reference in the JSON to ap-southeast-4 and create a separate regional dashboard.
-3. Verify the dashboard using AWS CLI
+
+### 3. Verify the dashboard using AWS CLI
 Check that the dashboard exists:
+```sh
 aws cloudwatch get-dashboard \
   --profile development \
   --region ap-southeast-2 \
   --dashboard-name IMDSv1-EC2-Monitoring
-
+```
 
 Also verify the number of instances currently configured to permit IMDSv1 directly through EC2:
+```sh
 aws ec2 describe-instances \
   --profile development \
   --region ap-southeast-2 \
   --filters "Name=metadata-options.http-tokens,Values=optional" \
   --query 'Reservations[].Instances[].[InstanceId,State.Name]' \
   --output table
-
+```
 
 This is a useful cross-check against the dashboard.
-4. Important scope limitations
+
+### 4. Important scope limitations
 Monitoring scope	Covered?
 All matching EC2 instances in Sydney account	Yes
 Windows and Linux	Yes
@@ -191,8 +204,9 @@ Third-party agents	Not required
 
 The dashboard uses native AWS-published metrics. It does not install anything on EC2 instances.
 
-One important distinction: CloudWatch dashboards provide visibility, not automatic notifications. We can add CloudWatch alarms and SNS notifications as a separate step.
-5. Recommended implementation for your environment
+`One important distinction`: CloudWatch dashboards provide visibility, not automatic notifications. We can add CloudWatch alarms and SNS notifications as a separate step.
+
+### 5. Recommended implementation for your environment
 I would implement this in two stages:
 1. Create the regional dashboards in your Development and Production accounts.
 2. Once validated, extend monitoring to all 12 AWS accounts and both Sydney and Melbourne regions.
