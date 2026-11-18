@@ -49,27 +49,17 @@ AWS introduced ImdsV1Enabled on 5 November 2026. This is especially useful becau
 
 ### 2. Create a CloudWatch dashboard for all EC2 instances
 This is what I recommend rather than manually selecting individual instance metrics.
-```sh
-The dashboard will show:
+
+The dashboard will show:</br>
 
 IMDSv1 – EC2 account monitoring
 
-All
-Instances allowing IMDSv1
+| All |Per instance | Per instance | Live metrics |
+| ---| ----| ---| ---|
+| Instances allowing IMDSv1| Actual IMDSv1 usage| Rejected IMDSv1 requests| Migration visibility| 
 
-
-Per instance
-Actual IMDSv1 usage
-
-
-Per instance
-Rejected IMDSv1 requests
-
-
-Live metrics
-Migration visibility
-
-Illustrative dashboard layout, not live account data.
+> [!NOTE]
+> Illustrative dashboard layout, not live account data.
 ```
 
 #### Step A – Create the dashboard JSON
@@ -194,13 +184,15 @@ aws ec2 describe-instances \
 This is a useful cross-check against the dashboard.
 
 ### 4. Important scope limitations
-Monitoring scope	Covered?
-All matching EC2 instances in Sydney account	Yes
-Windows and Linux	Yes
-Newly launched instances	Automatically, when metrics are published
-Multiple AWS regions	Separate regional dashboard or cross-region design
-All 12 AWS accounts	Not automatically with this command
-Third-party agents	Not required
+
+|Monitoring scope|	Covered| 
+|-------|---------|
+|All matching EC2 instances in Sydney account	|Yes|
+|Windows and Linux	|Yes|
+|Newly launched instances|	Automatically, when metrics are published|
+|Multiple AWS regions	|Separate regional dashboard or cross-region design|
+|Third-party agents	|Not required|
+
 
 The dashboard uses native AWS-published metrics. It does not install anything on EC2 instances.
 
