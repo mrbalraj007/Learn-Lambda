@@ -1,0 +1,65 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "EC2 Instances Allowing IMDSv1",
+        "view": "timeSeries",
+        "region": "ap-southeast-2",
+        "period": 300,
+        "stat": "Maximum",
+        "metrics": [
+          [
+            {
+              "expression": "SUM(SEARCH('{AWS/EC2,InstanceId} MetricName=\"ImdsV1Enabled\"', 'Maximum', 300))",
+              "id": "e1",
+              "label": "Instances allowing IMDSv1"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Actual IMDSv1 Usage Per EC2",
+        "view": "timeSeries",
+        "region": "ap-southeast-2",
+        "period": 300,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{AWS/EC2,InstanceId} MetricName=\"MetadataNoToken\"', 'Sum', 300)",
+              "id": "e2",
+              "label": "IMDSv1 requests"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Rejected IMDSv1 Requests Per EC2",
+        "view": "timeSeries",
+        "region": "ap-southeast-2",
+        "period": 300,
+        "metrics": [
+          [
+            {
+              "expression": "SEARCH('{AWS/EC2,InstanceId} MetricName=\"MetadataNoTokenRejected\"', 'Sum', 300)",
+              "id": "e3",
+              "label": "Rejected requests"
+            }
+          ]
+        ]
+      }
+    }
+  ]
+}
